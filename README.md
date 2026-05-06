@@ -1,170 +1,178 @@
-# TSC Defense Stack — `@shipispec/tsfix`
+# tsfix
 
-Standalone npm package implementing **Layers 0–1** of the TypeScript error-recovery stack: in-process tsc validation + deterministic LSP auto-fix. Layers 2–4 (LLM mend) currently live in `spectoship2/src/pipeline/` and will move to a sister package `@shipispec/tsmend` per the roadmap.
+> Headless TypeScript error recovery — auto-resolve `TS2304`, `TS2305`, `TS2551`, `TS2552`, `TS2724` before they reach a human.
 
-Read first:
-- `STATUS.md` — what's working, what's planned, current gaps
-- `ARCHITECTURE.md` — why the package is shaped the way it is
-- `tsc-defense-roadmap.md` — phased plan with open decisions
-- `CLAUDE.md` — working principles (small allowlist, fixture-pinned trust model)
+`@shipispec/tsfix` borrows the same TypeScript Language Service that powers VS Code's "Quick Fix" lightbulb and runs it as a CLI. Point it at a workspace, it fixes typos, missing imports, and did-you-mean errors deterministically — no LLM, no calls home, no config.
 
----
+Built for the case where you've just generated a few hundred files of TypeScript with an LLM and `tsc --noEmit` is screaming at you.
 
-## Source-of-truth map
+## Before / after
 
-This package owns its TypeScript-error handling code outright. The shims in `spectoship2/` re-export from here, not the reverse.
+```
+$ tsc --noEmit
+src/api.ts:5:2  - error TS2552: Cannot find name 'consol'. Did you mean 'console'?
+src/api.ts:8:5  - error TS2305: Module '"react"' has no exported member 'ueState'.
+src/api.ts:12:14 - error TS2551: Property 'lenght' does not exist on type 'string[]'. Did you mean 'length'?
 
-| Path | Role |
+Found 3 errors in 1 file.
+
+$ npx @shipispec/tsfix --workspace .
+[ts-lsp-fixer] applied 3 fixes across 1 file
+
+$ tsc --noEmit
+$ # 0 errors
+```
+
+## 30-second cold start
+
+```bash
+cd your-broken-project
+npx @shipispec/tsfix --workspace .
+```
+
+No config file. Exit code conventions:
+
+| Code | Meaning |
 |---|---|
-| `src/index.ts` | Public API (`runValidationLoop`, `runInProcessTsc`, `runLSPFixerPass`, `discoverTsFiles`) |
-| `src/validatorInProcess.ts` | In-process tsc with lib-path workaround (Layer 0) |
-| `src/tsLanguageServiceFixer.ts` | LSP auto-fixer using `getCodeFixesAtPosition` (Layer 1) |
-| `cli/run-stack.ts` | CLI: `tsx cli/run-stack.ts --workspace <path>` |
-| `benchmark/run-benchmark.ts` | Fixture harness (auto-discovers `fixtures/*/`) |
-| `fixtures/` | 14 hand-authored synthetic fixtures across 3 tiers |
-| `spectoship2/src/pipeline/validatorInProcess.ts` | **Re-export shim** → `@shipispec/tsfix` |
-| `spectoship2/src/pipeline/tsLanguageServiceFixer.ts` | **Re-export shim** → `@shipispec/tsfix` |
+| 0 | Workspace is clean |
+| 1 | Errors remain (printed to stderr) |
+| 2 | Bad arguments / harness error |
 
----
+Preview what *would* change without writing to disk:
 
-## How the layers fit together
-
-Per `ARCHITECTURE.md`, a TSC error has up to four chances to die before reaching a user. Layers -1 (prevention) and 2-4 (mend) live outside this package.
-
-```
-                    ┌─────────────────────────────────────────────────┐
-                    │ Layer -1: PREVENTION (in spectoship2/, not here)│
-                    │   packageGotchas, installedExports, priorExports│
-                    │   codeGenPrompts (rules injected into prompt)    │
-                    └────────────────────┬────────────────────────────┘
-                                         │ files written to disk
-                                         ▼
-  ┌────── @shipispec/tsfix ───────┴──────────────────────────┐
-  │                                                                  │
-  │   ┌─────────────────────────────────────────────┐               │
-  │   │ Layer 0: src/validatorInProcess.ts           │               │
-  │   │   in-process tsc → structured diagnostics    │               │
-  │   │   workspace lib-path override                │               │
-  │   └─────────────────────┬───────────────────────┘               │
-  │                         │ if errors                              │
-  │                         ▼                                        │
-  │   ┌─────────────────────────────────────────────┐               │
-  │   │ Layer 1: src/tsLanguageServiceFixer.ts       │               │
-  │   │   getCodeFixesAtPosition (5 SAFE codes)      │               │
-  │   │   signature-set progress check, max 5 iters  │               │
-  │   └─────────────────────┬───────────────────────┘               │
-  │                         │ re-validate; if errors remain          │
-  └─────────────────────────┼─────────────────────────────────────────┘
-                            ▼
-                 ┌─────────────────────────────────┐
-                 │ Layers 2-4: LLM MEND            │
-                 │   mendAgent / mendArchitect /   │
-                 │   multiFileMend / repairAgent   │
-                 │   (in spectoship2/, not here;   │
-                 │    moves to @shipispec/tsmend│
-                 │    in v0.2 per roadmap)         │
-                 └─────────────────────────────────┘
+```bash
+npx @shipispec/tsfix --workspace . --dry-run
 ```
 
----
+Machine-readable output for piping into other tools:
 
-## What to read first
-
-1. **`STATUS.md`** — current state, fixture catalog, recent fixes
-2. **`ARCHITECTURE.md`** — why the package is shaped the way it is (12 sections)
-3. **`tsc-defense-roadmap.md`** — phased plan with open decisions
-4. **`src/index.ts`** — public API entry point (`runValidationLoop`)
-5. **`src/tsLanguageServiceFixer.ts`** — Layer 1 fixer; understand `SAFE_FIXABLE_CODES`, the signature-set progress check, and the iteration loop
-6. **`src/validatorInProcess.ts`** — in-process tsc with the lib-path workaround that makes the package work inside the VS Code Extension Host
-
----
-
-## Standalone harness
-
-```
-cli/run-stack.ts             # CLI: run stack on any workspace
-benchmark/run-benchmark.ts   # benchmark across all fixtures
-fixtures/                    # 14 hand-authored synthetic workspaces
-  _shared/                   # shared node_modules symlink target
-  clean-baseline/            # regression check (must stay green)
-  synthetic-*/               # 9 LSP-behavior fixtures (positive + negative)
-  api-drift-*/               # 4 version-drift fixtures (Zod 3 vs 4, React 18 vs 19, etc.)
+```bash
+npx @shipispec/tsfix --workspace . --json
 ```
 
-### Use as a library (today's recommended path)
+### All flags
 
-`@shipispec/tsfix` ships its source as `.ts`. Plain Node 22+ refuses to type-strip files in `node_modules`, so consumers need a TypeScript-aware loader (`tsx`, `ts-node`, or `jiti`) until v0.2 ships an esbuild bundle. Most LLM-tooling projects already use one of these.
+| Flag | Meaning |
+|---|---|
+| `--workspace <path>` | Required. Directory containing your `tsconfig.json`. |
+| `--dry-run` | Run the fixer in memory, report counts, write nothing. |
+| `--no-lsp` | Validate only — skip auto-fix. |
+| `--files <a.ts,b.ts>` | Restrict fixing to a comma-separated list. |
+| `--json` | Machine-readable output. |
+| `--verbose` | Per-fix logging. |
+| `--help` | Print usage. |
 
-```sh
-npm install @shipispec/tsfix typescript
+## What it fixes
+
+| TS code | Meaning | What tsfix does |
+|---|---|---|
+| `TS2304` | Cannot find name | Auto-imports |
+| `TS2305` | Module has no exported member | Did-you-mean rename |
+| `TS2551` | Property does not exist on T, did you mean Y | Spelling fix |
+| `TS2552` | Cannot find name, did you mean Y | Spelling fix |
+| `TS2724` | Module member did-you-mean | Import rename |
+
+Against a 14-fixture benchmark spanning typos, did-you-mean cases, multi-file ripples, and 4 API-drift scenarios: **14/14 fixtures pass and 14/25 errors are auto-fixed (56%).** The remaining errors are intentionally outside Layer 0's scope (see below).
+
+## What it does *not* fix
+
+By design, tsfix only applies fixes that are **deterministic** and **non-structural**. It will refuse to:
+
+- Add or remove function declarations
+- Insert type annotations or change types
+- Modify control flow (`await` insertions, async propagation)
+- Rewrite JSX trees
+- Add object-literal stub properties
+
+The internal allowlist is two-layered: error codes (`SAFE_FIXABLE_CODES`) and Quick Fix names (`SAFE_FIX_NAMES = ['import', 'fixImport', 'spelling', 'fixSpelling']`). When the language service offers anything outside that allowlist, tsfix abstains and surfaces the error in the result so a higher layer (LLM, human) can pick it up.
+
+## The four-layer model
+
+tsfix is **Layer 0–1** of a larger error-recovery stack. The other layers are LLM-driven and live elsewhere (in your own code, or in companion packages):
+
+```
+Layer 0 — Prevention      (prompt rules, exported-API injection — your problem)
+Layer 1 — tsfix           (this package: deterministic auto-fix)
+─────────────────────────────────────────────────────────────────────────
+Layer 2 — Single-file LLM mend (architect + editor split)
+Layer 3 — Multi-file LLM mend  (blast-radius search/replace)
+Layer 4 — Stub-and-continue    (escape hatch)
 ```
 
-```js
-// run-fix.mjs
-import { runValidationLoop } from "@shipispec/tsfix";
+The bet: roughly half of TypeScript errors in LLM output are deterministically fixable. By catching them in Layer 1, you dodge the LLM tax (latency, cost, nondeterminism) on the easy half.
 
-const result = runValidationLoop({ workspaceRoot: "./my-project" });
-console.log(result.errorsBefore, "→", result.errorsAfter);
-console.log("LSP fixes:", result.lspFixer.fixesApplied);
+## Library API
+
+```typescript
+import { runValidationLoop } from '@shipispec/tsfix';
+
+const result = runValidationLoop({
+  workspaceRoot: '/path/to/your/project',
+  // Optional:
+  // targetFiles: ['src/api.ts'],
+  // dryRun: true,
+  // logger: { info: console.log, warn: console.warn, error: console.error },
+});
+
+result.errorsBefore;          // number
+result.errorsAfter;           // number
+result.lspFixer.fixesApplied; // number
+result.lspFixer.filesEdited;  // string[]
+result.passed;                // boolean — true if errorsAfter === 0
 ```
 
-```sh
-npx tsx run-fix.mjs    # tsx loads the package's .ts source
-```
+Other exports:
 
-### Use as a CLI (after `npm link` from a clone)
-
-The bin's `npx` cold-start is blocked on the v0.2 esbuild bundle (see roadmap § 1a). For now, clone-and-link works:
-
-```sh
-git clone https://github.com/owgreen-dev/spectoship-meta
-cd spectoship-meta/tsc-defense-stack
-npm install
-npm link
-
-tsfix --workspace ./your-project
-```
-
-Flags: `--json`, `--no-lsp`, `--verbose`, `--files <comma-list>`. Exit codes: `0` = clean, `1` = errors remain, `2` = bad args / harness error.
-
-### Run the benchmark (contributor-only)
-
-From inside the package directory after `npm install`:
-```sh
-npm run benchmark              # all 14 fixtures
-npm run benchmark -- --fixture synthetic-typo-ts2552    # one fixture
-```
-
-### Current baseline
-
-**14/14 synthetic fixtures pass. LSP fixer auto-resolves 14/25 errors (56%).** The remaining errors are intentional non-fixes — TS7006 implicit-any, TS2741 missing prop, API-drift errors that need the mend layer. See `STATUS.md` § Fixture catalog for the full list.
-
-### Capturing real-failure fixtures
-
-Phase 3b in the roadmap. When a real spec-pipeline run produces a TSC error Layer 0-1 doesn't fix, snapshot the broken `.ts(x)` files into `fixtures/real-<timestamp>-<hash>/` with an `expected.json`. The fixture set then grows from production failures, not just synthetic ones.
-
----
-
-## Troubleshooting
-
-**`ERR_MODULE_NOT_FOUND: Cannot find package 'typescript'`** — your package manager didn't install the peer dependency. Run `npm install typescript` (or yarn/pnpm equivalent). Modern npm (v7+) auto-installs peers, so you'll usually only see this with older npm or with `auto-install-peers=false`.
-
-**`Cannot find module '<workspace>/tsconfig.json'`** — you pointed `--workspace` at a directory with no `tsconfig.json`. Pass a directory whose root has the project's tsconfig (typically the project root, not a sub-package).
-
----
+- `runInProcessTsc(opts)` — validation only, no fixer. Returns structured diagnostics.
+- `runLSPFixerPass(opts)` — Layer 0 fixer alone, no validation loop wrapper.
+- `discoverTsFiles(workspaceRoot)` — file-walking helper. Skips `node_modules`, `.next`, `dist`, `build`, `out`, `coverage`, `.git`.
 
 ## Trust model
 
-`@shipispec/tsfix` loads `typescript` from your workspace's `node_modules` (this is required for the lib-path workaround that makes the package work inside esbuild bundles). That means a malicious workspace's `typescript` install can execute arbitrary code at validate time.
+tsfix loads `typescript` from your workspace's `node_modules` — it does **not** bundle its own. This is intentional: it ensures the fixer behaves identically to the `tsc` your project actually compiles with.
 
-**Only run `tsfix` on workspaces you trust.** This is the same trust boundary as ESLint, Prettier, Vitest, and other tools that load the workspace's TypeScript.
+> **Run tsfix only on workspaces you trust.** Loading `typescript` from an attacker-controlled `node_modules` is equivalent to running `node_modules/.bin/tsc` against it.
 
-There is no telemetry, no outbound HTTP, and no exec calls outside the local `node` ↔ `tsx` invocation in the bin wrapper. The only filesystem writes are LSP edits to files you pass in via `targetFiles` (or files discovered under `workspaceRoot`).
+Other surface:
 
----
+- No network calls.
+- No telemetry.
+- No background processes.
+- No config files written or modified outside `--workspace`.
 
-## What's in the package vs what's only for contributors
+## Engines
 
-The published tarball ships `src/`, `cli/`, `bin/`, plus `README.md` / `LICENSE` / `CHANGELOG.md`. Everything else (`benchmark/`, `fixtures/`, `tsconfig.json`, the dev-only npm scripts in `package.json`, the design docs in `docs/`) is contributor-side and either excluded from the tarball via `package.json#files` or just not part of the consumer-facing surface.
+- Node `>=20.9.0`
+- TypeScript `>=5.0.0` (peer dep — must be installed in your workspace)
 
-**Heads-up for consumers:** the published `package.json` includes `scripts.benchmark`, `scripts.test`, and `scripts.setup-fixtures`. Those reference `tsx`, `vitest`, and `fixtures/_shared/` — none of which ship to consumers. Don't run them from your `node_modules/@shipispec/tsfix/` directory; clone the repo if you want to contribute.
+If your workspace has no `node_modules/typescript`, tsfix will fail with a clear error:
+
+```
+error: this workspace has no TypeScript installed.
+run: npm install --save-dev typescript
+```
+
+## Contributing
+
+The contract for adding a fix:
+
+1. **Probe** — write a tiny test workspace with the exact error you want fixable. Drop it under `fixtures/<descriptive-name>/` with an `expected.json` declaring `errorsBefore`, `errorsAfterMax`, `lspFixesAppliedMin/Max`, and `mustPass`.
+2. **Verify** — run `npm run benchmark -- --fixture <name>` and inspect what the language service offers (the `fix.fixName` field).
+3. **Allowlist change** — if `fixName` is unsafe (`fixMissingFunctionDeclaration`, `addMissingPropertyAndOptional`, etc.), document why we don't trust it. Otherwise, add the error code to `SAFE_FIXABLE_CODES` and the fix name to `SAFE_FIX_NAMES` in `src/tsLanguageServiceFixer.ts`.
+4. **Lock it in** — confirm all existing fixtures still pass (`npm run benchmark`). Open a PR.
+
+Each new code/fix-name pair gets its own fixture. We don't trust the language service blindly — we trust it under specific, pinned conditions.
+
+`npm run matrix` runs the same package against 6 distinct project shapes (Next.js, Vite + React, plain `nodenext`, plain `bundler`, plain CommonJS, monorepo with project references). It builds the local tarball and exercises it cold; pre-publish gate.
+
+## License
+
+MIT.
+
+## See also
+
+- `CHANGELOG.md` — release notes per version.
+- `ARCHITECTURE.md` — internal design rationale (the four-layer model, the workspace lib-path workaround).
+- `STATUS.md` — current snapshot, gaps, and roadmap state.
+- `tsc-defense-roadmap.md` — phased plan.
+- `docs/internal-orientation.md` — the original SpecToShip-context README, kept for contributors who want the design history.
