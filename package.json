@@ -1,6 +1,6 @@
 {
 	"name": "@shipispec/tsfix",
-	"version": "0.2.0",
+	"version": "0.3.0",
 	"description": "Reusable TypeScript error-recovery agent. Validates LLM-generated TS code, auto-fixes deterministic error classes via the TS Language Service, and exposes hooks for LLM-driven repair.",
 	"keywords": [
 		"typescript",

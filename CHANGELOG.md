@@ -4,8 +4,25 @@ All notable changes to `@shipispec/tsfix` are documented here. Format follows [K
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-07
+
+Phase 2 contract release. **Establishes the public types `MendContext`, `LayerEvent`, and `Diagnostic` so a downstream LLM-mend package (e.g. `@shipispec/tsmend`) can consume tsfix's output without redefining the shape.** No behavior changes; purely additive types. Also collapses several dev-only improvements that landed since v0.2.0 into a single release.
+
 ### Added
-- **Project-shape matrix** (`scripts/run-matrix.mjs`, `npm run matrix`) — pre-publish gate that builds the local tarball and exercises it cold against 6 distinct project shapes: `monorepo-refs` (project references — pinned as a documented limitation), `next-app` (App Router, `paths` alias, `jsx: preserve`), `plain-ts-bundler` (esnext + bundler), `plain-ts-commonjs` (legacy CJS + ES2015 + node10), `plain-ts-nodenext` (nodenext resolution), `react-vite` (TSX + `jsx: react-jsx`). Each sample has an `expected.json` asserting `errorsBefore`, `errorsAfterMax`, `lspFixesAppliedMin/Max`, `mustPass`, and `expectFileContains` post-fix. 6/6 pass on 2026-05-05. Dev-only — not shipped in the tarball.
+- **`MendContext` interface** — public type defining the input contract for a Layer 2–4 LLM-mend agent. Required fields: `workspaceRoot`, `diagnostics`, `erroredFiles`. Optional fields: `taskDescription`, `featureSpecText`, `acceptanceCriteria`, `siblingTasks`, `priorTaskExports`, `installedTypes`.
+- **`LayerEvent` interface** — per-layer event shape for streaming telemetry. Designed for an `onLayerEvent` callback in a future minor release; the type is published now so downstream callers can construct events themselves.
+- **`Diagnostic` type alias** — public re-export of `InProcessTscResult["diagnostics"][number]`. Convenience for consumers building `MendContext`.
+- **Project-shape matrix** (`scripts/run-matrix.mjs`, `npm run matrix`) — pre-publish gate that builds the local tarball and exercises it cold against 6 distinct project shapes: `monorepo-refs` (project references — pinned as a documented limitation), `next-app` (App Router, `paths` alias, `jsx: preserve`), `plain-ts-bundler` (esnext + bundler), `plain-ts-commonjs` (legacy CJS + ES2015 + node10), `plain-ts-nodenext` (nodenext resolution), `react-vite` (TSX + `jsx: react-jsx`). 6/6 pass. Dev-only — not shipped in the tarball.
+- **Capture script** (`scripts/capture-fixture.mjs`, `npm run capture`) — Phase 3b tooling for snapshotting real broken workspaces into `fixtures/real-<name>/`. Awaits first real failure to produce fixtures.
+- **GitHub Actions CI** (`.github/workflows/test.yml`) — runs check-types, vitest, benchmark, and the matrix on every PR + main push.
+
+### Changed
+- **Repository moved.** `tsc-defense-stack/` was extracted from the `spectoship-meta` monorepo into its own repository at <https://github.com/owgreen-dev/tsfix>. All `repository.url`, `homepage`, `bugs.url` fields point at the new repo. Internal git history pre-2026-05-06 lives in the original monorepo; the CHANGELOG narrates v0.1.0–v0.2.0 in detail.
+- **Public README rewritten** for an OSS audience — tagline, before/after, 30-second cold start, four-layer model, library API, trust model, contributing protocol. Previous internal-orientation README preserved at `docs/internal-orientation.md`.
+
+### Engines
+- Node `>=20.9.0` (unchanged)
+- TypeScript `>=5.0.0` peer (unchanged)
 
 ## [0.2.0] - 2026-05-04
 
@@ -80,7 +97,8 @@ Initial public release. **Layers 0–1 only** (deterministic detection + auto-fi
 - Node `>=20.9.0` (matches VS Code Extension Host runtime)
 - TypeScript `>=5.0.0` (peer dep, must be installed in the consuming workspace)
 
-[Unreleased]: https://github.com/owgreen-dev/tsfix/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/owgreen-dev/tsfix/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/owgreen-dev/tsfix/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/owgreen-dev/tsfix/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/owgreen-dev/tsfix/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/owgreen-dev/tsfix/releases/tag/v0.1.0
