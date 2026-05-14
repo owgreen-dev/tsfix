@@ -1,0 +1,15 @@
+{
+  "description": "Removed required property 'headers' from object literal. Should report TS2741 (missing property).",
+  "expectedErrorCode": "TS2741",
+  "errorsBefore": 1,
+  "errorsAfterMax": 0,
+  "maxIterations": 3,
+  "mustPass": true,
+  "costUsdMax": 0.005,
+  "_generated": {
+    "seed": "apiRouter.ts",
+    "mutator": "ts2741-missing-property",
+    "index": 1,
+    "timestamp": "2026-05-10T19:38:52.205Z"
+  }
+}

@@ -4,6 +4,51 @@ All notable changes to `@shipispec/tsfix` are documented here. Format follows [K
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-14
+
+**Layer 2 LLM mend is now in-package.** The previously-planned sister package `@shipispec/tsmend` has been folded into `tsfix` so the deterministic Layer 0/1 stack and the LLM-driven Layer 2 stack ship as one. This reverses the v0.3.0 sister-package decision (D3) — see roadmap update.
+
+### Added (Layer 2 — single-file LLM mend)
+- **`getTypeContext(opts)`** — TS Language Service helper. Resolves an error site to its declaring type via `getTypeAtLocation()` + `getDeclarations()`, slices ±3 lines around the error site and ±20 lines around the declaration. Bounded walk-up (4 hops) plus a special case for `PropertyAccessExpression` so TS2339 errors resolve to the *receiver's* type, not the non-existent property's. The architectural moat — no other OSS tool does this for TypeScript specifically.
+- **`mendSingleFile(opts)`** — single-LLM repair via Vercel AI SDK + `@ai-sdk/anthropic`. Uses top-level `system:` parameter (v6 pattern), markdown-headered file delimiters in the prompt (XML wrappers caused Claude to mirror them in output and break the parser). Returns `rawResponse`, parsed `blocks`, `apply` result, token counts, latency.
+- **`applySingleBlock(content, search, replace)`** + **`applyEditBlocks(opts)`** + **`parseEditBlocks(text)`** — Aider-style `editblock` parser and 3-tier fuzzy applier (exact → rstrip → strip). Defensive parser handles `<file path="…">` wrappers Claude emits when the system prompt uses XML markers. Abstains on ambiguous matches (multiple hits) rather than guess.
+- **`runMendLoop(opts)`** — bounded retry (default 3 iterations) with no-progress / regression detection via error-signature-set comparison. Streams per-iteration data: `patchesApplied`, `patchesFailed`, `inputTokens`, `outputTokens`, `latencyMs`, `rawResponse`. Stop reasons: `noErrors`, `fixed`, `noProgress`, `regressed`, `maxIterations`.
+
+### Added (fixtures + harness)
+- **3 hand-authored minimal Layer-2 fixtures** — `mend-ts2339-property-typo`, `mend-ts7006-implicit-any`, `mend-ts2741-missing-prop`.
+- **2 realistic Layer-2 fixtures** — `realistic-multi-error-user-helpers` (3 errors, 1 file, `taskDescription` populated), `realistic-rename-ripple` (2 errors, 2 files).
+- **30 auto-generated fixtures** via `scripts/generate-fixtures.mjs` (ts-morph AST mutators × 3 codes × 3 seeds × 10 each). Total Layer-2 fixture corpus: **35**.
+- **`benchmark/run-llm-benchmark.ts`** (`npm run benchmark:llm`) — Layer 2 live LLM benchmark against Anthropic. Skips silently with exit 0 when `ANTHROPIC_API_KEY` is unset.
+- **`scripts/generate-fixtures.mjs`** (`npm run generate-fixtures`) — ts-morph AST mutators that introduce one targeted error per fixture into a valid seed file. Validation gate: every mutation runs through `runInProcessTsc` to confirm the expected error code, then through `runValidationLoop` to confirm Layer 0 abstains. Memory-bounded shared `Project` + tempDir + cache resets to prevent OOMs.
+
+### Added (tests)
+- **33 unit tests** across `typeContext`, `applyEditBlock`, `mendAgent`, `runMendLoop`. Mocked LLM call via injectable `_callLLM` — tests never hit the real API.
+
+### Added (CI)
+- Workflow gains a Layer-2 benchmark step gated on `ANTHROPIC_API_KEY` (skips cleanly when unset). Existing Layer-0 benchmark + matrix steps unchanged.
+- Bumped `actions/checkout` + `actions/setup-node` v4 → v5.
+
+### Changed
+- **Dependencies added (runtime):** `@ai-sdk/anthropic@^3.0.44`, `ai@^6.0.86`. Previous "near-zero deps" north star (Layer 0/1 only) is superseded — package now spans Layer 0/1/2.
+- **Dependencies added (dev):** `ts-morph@^28.0.0` (fixture generation).
+- **Public-API surface** at `src/index.ts` extended with the Layer-2 exports listed above. Layer 0/1 surface unchanged — `runValidationLoop`, `runInProcessTsc`, `runLSPFixerPass`, `discoverTsFiles`, and the contract types stay byte-identical.
+- **Roadmap decision D3 reversed** — previous decision was "mend in sister package"; current decision is "mend in-package." Updated in `tsc-defense-roadmap.md`.
+
+### Engines
+- Node `>=20.9.0` (unchanged)
+- TypeScript `>=5.0.0` peer (unchanged)
+
+### Performance signals (Layer 2, 35-fixture run, claude-haiku-4-5)
+
+| Metric | Target | Observed |
+|---|---|---|
+| Pass rate | ≥70% (Haiku floor) | **100%** (35/35) |
+| Iter-1 success | ≥40% | **97%** (34/35) |
+| Cost / fixture | ≤$0.005 | **$0.001 avg** |
+| Latency / fixture | P95 ≤25s | ~1.5s |
+
+Caveat: 30 of 35 fixtures are single-error mutations of 3 seeds. Real-world diversity will dent these numbers.
+
 ## [0.3.0] - 2026-05-07
 
 Phase 2 contract release. **Establishes the public types `MendContext`, `LayerEvent`, and `Diagnostic` so a downstream LLM-mend package (e.g. `@shipispec/tsmend`) can consume tsfix's output without redefining the shape.** No behavior changes; purely additive types. Also collapses several dev-only improvements that landed since v0.2.0 into a single release.
@@ -97,7 +142,8 @@ Initial public release. **Layers 0–1 only** (deterministic detection + auto-fi
 - Node `>=20.9.0` (matches VS Code Extension Host runtime)
 - TypeScript `>=5.0.0` (peer dep, must be installed in the consuming workspace)
 
-[Unreleased]: https://github.com/owgreen-dev/tsfix/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/owgreen-dev/tsfix/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/owgreen-dev/tsfix/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/owgreen-dev/tsfix/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/owgreen-dev/tsfix/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/owgreen-dev/tsfix/compare/v0.1.0...v0.1.1

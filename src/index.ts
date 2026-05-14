@@ -4,7 +4,8 @@
  * A reusable TypeScript error-recovery agent. Validates LLM-generated (or any)
  * TypeScript code via in-process tsc, auto-fixes deterministic error classes
  * (TS2304/2305/2552/2724) via TypeScript's built-in code-fix engine, and
- * exposes hooks for LLM-driven repair (planned, not yet shipped).
+ * runs Layer 2 LLM mend (single-file repair via Vercel AI SDK + Anthropic)
+ * on what survives.
  *
  * ## Quick start (library)
  *
@@ -31,15 +32,18 @@
  * - `runInProcessTsc` — just type-check, returns structured diagnostics
  * - `runLSPFixerPass` — just the auto-fix pass, edits files in place
  *
- * ## Public types for downstream LLM-mend integrations
+ * ## Public types for the LLM-mend layer
  *
  * - `Diagnostic` — single tsc error (re-exported from `runInProcessTsc`)
- * - `MendContext` — input contract for a Layer 2–4 LLM-mend agent
+ * - `MendContext` — input contract for the Layer 2–4 LLM-mend agent
  * - `LayerEvent` — per-layer event shape for streaming telemetry
  *
- * The mend agents themselves (`@shipispec/tsmend`, planned) consume these
- * types but are not shipped from this package — `tsfix` stays Layer 0–1
- * deterministic.
+ * ## Layer 2 mend API (v0.4.0+)
+ *
+ * - `getTypeContext` — TS Language Service type-declaration injection
+ * - `mendSingleFile` — single-LLM-call repair via Vercel AI SDK
+ * - `runMendLoop` — bounded retry with no-progress / regression detection
+ * - `parseEditBlocks` / `applyEditBlocks` — Aider-style SEARCH/REPLACE applier
  */
 
 export { runInProcessTsc, isInProcessTscEnabled, resetInProcessTscCache } from "./validatorInProcess.js";
@@ -295,3 +299,29 @@ export interface LayerEvent {
 	/** `Date.now()` at emission. */
 	ts: number;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Layer 2 — LLM mend (folded in from @shipispec/tsmend at v0.4.0)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export { getTypeContext, resetTypeContextCache } from "./typeContext.js";
+export type { TypeContextOptions, TypeContext } from "./typeContext.js";
+
+export { parseEditBlocks, applySingleBlock, applyEditBlocks } from "./applyEditBlock.js";
+export type {
+	EditBlock,
+	ApplyEditBlocksOptions,
+	ApplyResult,
+	SingleBlockResult,
+} from "./applyEditBlock.js";
+
+export { mendSingleFile } from "./mendAgent.js";
+export type { MendSingleFileOptions, MendSingleFileResult, LLMCall } from "./mendAgent.js";
+
+export { runMendLoop } from "./runMendLoop.js";
+export type {
+	RunMendLoopOptions,
+	RunMendLoopResult,
+	MendLoopIteration,
+	StopReason,
+} from "./runMendLoop.js";

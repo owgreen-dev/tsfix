@@ -1,0 +1,15 @@
+{
+  "description": "Renamed property access 'email' → 'xqz_doesNotExist1' (no near match — pure TS2339, Layer 0 abstains).",
+  "expectedErrorCode": "TS2339",
+  "errorsBefore": 1,
+  "errorsAfterMax": 0,
+  "maxIterations": 3,
+  "mustPass": true,
+  "costUsdMax": 0.005,
+  "_generated": {
+    "seed": "userCrud.ts",
+    "mutator": "ts2339-property-not-exist",
+    "index": 1,
+    "timestamp": "2026-05-10T19:38:44.776Z"
+  }
+}

@@ -1,0 +1,9 @@
+{
+	"description": "TS2741: object literal missing required property 'email'. The LLM should add an email field to the literal (any string value). Layer 0 cannot fix this — its `addMissingPropertyAndOptional` LSP fix is explicitly excluded from SAFE_FIX_NAMES because it inserts placeholder stubs.",
+	"expectedErrorCode": "TS2741",
+	"errorsBefore": 1,
+	"errorsAfterMax": 0,
+	"maxIterations": 2,
+	"mustPass": true,
+	"costUsdMax": 0.02
+}

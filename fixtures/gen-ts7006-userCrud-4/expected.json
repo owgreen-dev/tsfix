@@ -1,0 +1,15 @@
+{
+  "description": "Stripped type annotation from parameter 'id: string'. Should now report TS7006 implicit any.",
+  "expectedErrorCode": "TS7006",
+  "errorsBefore": 1,
+  "errorsAfterMax": 0,
+  "maxIterations": 3,
+  "mustPass": true,
+  "costUsdMax": 0.005,
+  "_generated": {
+    "seed": "userCrud.ts",
+    "mutator": "ts7006-implicit-any",
+    "index": 4,
+    "timestamp": "2026-05-10T19:38:49.724Z"
+  }
+}
