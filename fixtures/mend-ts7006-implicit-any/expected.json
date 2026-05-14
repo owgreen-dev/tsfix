@@ -1,0 +1,9 @@
+{
+	"description": "TS7006: parameter 'x' implicitly has 'any' type. Function body uses `x * 2` so the LLM should annotate `x: number`. Layer 0 cannot fix this (no safe LSP code-fix for type inference).",
+	"expectedErrorCode": "TS7006",
+	"errorsBefore": 1,
+	"errorsAfterMax": 0,
+	"maxIterations": 2,
+	"mustPass": true,
+	"costUsdMax": 0.02
+}

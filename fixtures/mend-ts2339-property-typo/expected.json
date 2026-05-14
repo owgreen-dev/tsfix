@@ -1,0 +1,9 @@
+{
+	"description": "TS2339: 'Property email does not exist on type User'. The function name `getEmail` makes the intent clear — the LLM should add `email: string` to the User type. Layer 0 cannot fix this (no LSP code-fix exists for adding fields to user-defined types).",
+	"expectedErrorCode": "TS2339",
+	"errorsBefore": 1,
+	"errorsAfterMax": 0,
+	"maxIterations": 2,
+	"mustPass": true,
+	"costUsdMax": 0.02
+}

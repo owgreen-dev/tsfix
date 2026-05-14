@@ -64,6 +64,12 @@ function listFixtures(filter?: string): string[] {
 		const dir = path.join(FIXTURES_ROOT, e.name);
 		if (!fs.existsSync(path.join(dir, "expected.json"))) continue;
 		if (!fs.existsSync(path.join(dir, "tsconfig.json"))) continue;
+		// Skip Layer-2 fixtures (mend territory) — they have `costUsdMax` or
+		// `expectedErrorCode` (singular) in their expected.json schema. The
+		// Layer-0 benchmark cannot resolve them by design; they belong to
+		// `npm run benchmark:llm`.
+		const expectedRaw = fs.readFileSync(path.join(dir, "expected.json"), "utf-8");
+		if (/"costUsdMax"|"expectedErrorCode"/.test(expectedRaw)) continue;
 		out.push(e.name);
 	}
 	return out.sort();

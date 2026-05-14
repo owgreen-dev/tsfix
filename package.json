@@ -1,7 +1,7 @@
 {
 	"name": "@shipispec/tsfix",
-	"version": "0.3.0",
-	"description": "Reusable TypeScript error-recovery agent. Validates LLM-generated TS code, auto-fixes deterministic error classes via the TS Language Service, and exposes hooks for LLM-driven repair.",
+	"version": "0.4.0",
+	"description": "TypeScript error-recovery for LLM-generated code. Layer 0/1 deterministic auto-fix via the TS Language Service + Layer 2 LLM mend (Vercel AI SDK + Anthropic) in one package.",
 	"keywords": [
 		"typescript",
 		"tsc",
@@ -11,6 +11,9 @@
 		"auto-fix",
 		"llm",
 		"ai-codegen",
+		"ai-sdk",
+		"anthropic",
+		"code-repair",
 		"validator",
 		"linter"
 	],
@@ -49,18 +52,26 @@
 		"build": "node scripts/build.mjs",
 		"matrix": "node scripts/run-matrix.mjs",
 		"capture": "node scripts/capture-fixture.mjs",
+		"pregenerate-fixtures": "npm run build",
+		"generate-fixtures": "node scripts/generate-fixtures.mjs",
 		"prepack": "npm run build",
 		"setup-fixtures": "node -e \"require('fs').existsSync('fixtures/_shared/node_modules')||require('child_process').execSync('npm install --prefix fixtures/_shared',{stdio:'inherit'})\"",
 		"prebenchmark": "npm run setup-fixtures",
 		"pretest": "npm run setup-fixtures",
 		"benchmark": "tsx benchmark/run-benchmark.ts",
+		"benchmark:llm": "tsx benchmark/run-llm-benchmark.ts",
 		"run-stack": "tsx cli/run-stack.ts",
 		"test": "vitest run",
 		"check-types": "tsc --noEmit"
 	},
+	"dependencies": {
+		"@ai-sdk/anthropic": "^3.0.44",
+		"ai": "^6.0.86"
+	},
 	"devDependencies": {
 		"@types/node": "^20.0.0",
 		"esbuild": "^0.28.0",
+		"ts-morph": "^28.0.0",
 		"tsx": "^4.20.6",
 		"typescript": "^5.9.3",
 		"vitest": "^3.2.4"

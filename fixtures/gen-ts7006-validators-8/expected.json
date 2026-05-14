@@ -1,0 +1,15 @@
+{
+  "description": "Stripped type annotation from parameter 'age: number'. Should now report TS7006 implicit any.",
+  "expectedErrorCode": "TS7006",
+  "errorsBefore": 1,
+  "errorsAfterMax": 0,
+  "maxIterations": 3,
+  "mustPass": true,
+  "costUsdMax": 0.005,
+  "_generated": {
+    "seed": "validators.ts",
+    "mutator": "ts7006-implicit-any",
+    "index": 8,
+    "timestamp": "2026-05-10T19:38:51.118Z"
+  }
+}

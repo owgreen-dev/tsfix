@@ -9,14 +9,14 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '20'
           cache: npm
 
-      # The lockfile was generated on macOS, so it doesn't list
+      # The lockfile is generated on macOS, so it doesn't list
       # `@rollup/rollup-linux-x64-gnu` (the platform-specific optional dep
       # vitest's rollup requires) — npm bug 4828. Both `npm ci` and `npm
       # install` honor the existing lockfile, so we remove it first to force
@@ -29,8 +29,17 @@ jobs:
       - name: Unit tests (vitest)
         run: npm test
 
-      - name: Benchmark (14 synthetic fixtures)
+      - name: Benchmark — Layer 0 (synthetic fixtures, deterministic)
         run: npm run benchmark
 
       - name: Matrix (6 project shapes, cold tarball install)
         run: npm run matrix
+
+      # Live LLM benchmark — exits 0 with a "skipped" message when
+      # ANTHROPIC_API_KEY is unset, so it doesn't break CI before the secret
+      # is configured. Once configured, runs the Layer-2 fixtures against
+      # claude-haiku-4-5 (~$0.001/fixture avg).
+      - name: Benchmark — Layer 2 (LLM mend, gated on ANTHROPIC_API_KEY)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: npm run benchmark:llm
