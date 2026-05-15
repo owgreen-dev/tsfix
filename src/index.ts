@@ -44,6 +44,12 @@
  * - `mendSingleFile` — single-LLM-call repair via Vercel AI SDK
  * - `runMendLoop` — bounded retry with no-progress / regression detection
  * - `parseEditBlocks` / `applyEditBlocks` — Aider-style SEARCH/REPLACE applier
+ *
+ * ## Layer 4 escape hatch (v0.5.0+)
+ *
+ * - `stubAndContinue` — insert `// @ts-expect-error - tsfix: ...` above
+ *   unresolved error sites so the workspace compiles. Opt-in: set
+ *   `stubOnFailure: true` on `runMendLoop`, or call directly.
  */
 
 export { runInProcessTsc, isInProcessTscEnabled, resetInProcessTscCache } from "./validatorInProcess.js";
@@ -325,3 +331,12 @@ export type {
 	MendLoopIteration,
 	StopReason,
 } from "./runMendLoop.js";
+
+// Layer 4 — stub-and-continue (opt-in escape hatch).
+export { stubAndContinue } from "./stubAndContinue.js";
+export type {
+	StubAndContinueOptions,
+	StubAndContinueResult,
+	AppliedStub,
+	SkippedStub,
+} from "./stubAndContinue.js";

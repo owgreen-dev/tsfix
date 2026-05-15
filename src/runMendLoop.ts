@@ -26,6 +26,7 @@
 import type { Diagnostic, MendContext } from "./index.js";
 import { resetInProcessTscCache, runInProcessTsc } from "./validatorInProcess.js";
 import { mendSingleFile, type LLMCall, type MendSingleFileResult } from "./mendAgent.js";
+import { stubAndContinue, type AppliedStub } from "./stubAndContinue.js";
 
 export interface RunMendLoopOptions {
 	context: MendContext;
@@ -38,6 +39,13 @@ export interface RunMendLoopOptions {
 	maxIterations?: number;
 	/** Single dry-run pass — call LLM, parse, but don't write to disk. Default false. */
 	dryRun?: boolean;
+	/**
+	 * When the loop exits with leftover errors (stopReason !== "fixed"),
+	 * apply Layer 4 stub-and-continue: insert `// @ts-expect-error - tsfix: ...`
+	 * comments above each unresolved error site so tsc exits 0. Opt-in.
+	 * Default false. Ignored when `dryRun: true`.
+	 */
+	stubOnFailure?: boolean;
 	/** @internal — LLM call override for tests. */
 	_callLLM?: LLMCall;
 }
@@ -60,7 +68,8 @@ export type StopReason =
 	| "fixed"
 	| "noProgress"
 	| "regressed"
-	| "maxIterations";
+	| "maxIterations"
+	| "stubbed";
 
 export interface RunMendLoopResult {
 	iterations: MendLoopIteration[];
@@ -71,6 +80,13 @@ export interface RunMendLoopResult {
 	totalInputTokens: number;
 	totalOutputTokens: number;
 	totalLatencyMs: number;
+	/**
+	 * Layer 4 stubs applied after the LLM loop terminated with leftover
+	 * errors. Present only when `stubOnFailure: true` was set. Empty array
+	 * means stubOnFailure ran but nothing was eligible (e.g. all errors
+	 * were in .d.ts files).
+	 */
+	stubs?: AppliedStub[];
 }
 
 const noopLogger = { info: () => {}, warn: () => {}, error: () => {} };
@@ -104,7 +120,7 @@ function refreshDiagnostics(workspaceRoot: string, files: string[]): Diagnostic[
 }
 
 export async function runMendLoop(opts: RunMendLoopOptions): Promise<RunMendLoopResult> {
-	const { context, llm, maxIterations = 3, dryRun = false, _callLLM } = opts;
+	const { context, llm, maxIterations = 3, dryRun = false, stubOnFailure = false, _callLLM } = opts;
 	const startMs = Date.now();
 
 	const diagnosticsBefore = context.diagnostics.filter((d) => d.category === "error");
@@ -192,6 +208,23 @@ export async function runMendLoop(opts: RunMendLoopOptions): Promise<RunMendLoop
 		prevSig = newSig;
 	}
 
+	// Layer 4 — stub-and-continue. Only runs when the LLM loop didn't
+	// reach `fixed` AND the caller opted in AND we're not in dryRun.
+	let stubs: AppliedStub[] | undefined;
+	if (stubOnFailure && !dryRun && currentDiags.length > 0) {
+		const stubResult = stubAndContinue({
+			workspaceRoot: context.workspaceRoot,
+			diagnostics: currentDiags,
+		});
+		stubs = stubResult.stubsApplied;
+		// Re-validate so diagnosticsAfter reflects the post-stub state.
+		const postStubDiags = refreshDiagnostics(context.workspaceRoot, filesInScope);
+		if (postStubDiags.length === 0) {
+			stopReason = "stubbed";
+		}
+		currentDiags = postStubDiags;
+	}
+
 	return {
 		iterations,
 		diagnosticsBefore,
@@ -201,5 +234,6 @@ export async function runMendLoop(opts: RunMendLoopOptions): Promise<RunMendLoop
 		totalInputTokens,
 		totalOutputTokens,
 		totalLatencyMs: Date.now() - startMs,
+		...(stubs !== undefined ? { stubs } : {}),
 	};
 }

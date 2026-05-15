@@ -4,6 +4,25 @@ All notable changes to `@shipispec/tsfix` are documented here. Format follows [K
 
 ## [Unreleased]
 
+### Added (Layer 4 — stub-and-continue escape hatch)
+- **`stubAndContinue(opts)`** — new public API. Inserts `// @ts-expect-error - tsfix: <codes> — <message>` immediately above each unresolved error site so `tsc --noEmit` exits 0. Closes the "tsfix never leaves the workspace worse than it found it" property. Uses `@ts-expect-error` (not `@ts-ignore`) so directives self-destruct once the underlying issue is fixed by other means.
+- **`runMendLoop` opt-in flag** — new `stubOnFailure?: boolean` option (default `false`). When the LLM loop terminates with leftover errors and the flag is set, Layer 4 runs automatically. New `"stubbed"` stop reason; new `stubs?: AppliedStub[]` result field with what was applied.
+- **Idempotency** — re-running `stubAndContinue` on an already-stubbed workspace is a no-op. Detects existing `@ts-expect-error` / `@ts-ignore` directives on the line above and skips.
+- **Safe skips** — `node_modules/`, `.d.ts` files, missing files, and lines beyond file length are recorded as `skipped` (with reason) rather than crashing.
+- **Multi-error coalescing** — multiple diagnostics on the same line collapse into one stub comment listing all TS codes and joined messages.
+- **Indent + CRLF preservation** — comment matches the indentation of the line it's stubbing; CRLF line endings on Windows-authored files survive the rewrite.
+- **`dryRun`** support — same semantics as Layer 2: reports `stubsApplied` without writing.
+
+### Added (tests)
+- **19 new unit tests** — 16 in `stubAndContinue.test.ts` (single error, multi-error-same-line, multi-code, indent preservation, descending-order processing, idempotency, node_modules skip, .d.ts skip, missing-file skip, dry-run, message truncation, CRLF preservation, first-line edge case, no-eligible case, warning/suggestion filtering, multi-file) + 3 in `runMendLoop.test.ts` (stubOnFailure true → stopReason flips to "stubbed" and tsc exits clean, stubOnFailure default false → errors stay, stubOnFailure + dryRun → no disk writes).
+
+### Changed
+- **Public surface** at `src/index.ts` extended with `stubAndContinue`, `StubAndContinueOptions`, `StubAndContinueResult`, `AppliedStub`, `SkippedStub`. Layer 0/1/2 surface unchanged.
+- **`RunMendLoopOptions`** gains `stubOnFailure?: boolean`. **`RunMendLoopResult`** gains optional `stubs?: AppliedStub[]`. **`StopReason`** union gains `"stubbed"`. All additive — old callers unaffected.
+
+### Fixed
+- **`stubAndContinue` resolves relative paths** against `workspaceRoot`. Diagnostics from `runInProcessTsc` use relative paths; consumers may pass absolute. Both work.
+
 ## [0.4.0] - 2026-05-14
 
 **Layer 2 LLM mend is now in-package.** The previously-planned sister package `@shipispec/tsmend` has been folded into `tsfix` so the deterministic Layer 0/1 stack and the LLM-driven Layer 2 stack ship as one. This reverses the v0.3.0 sister-package decision (D3) — see roadmap update.

@@ -262,4 +262,92 @@ describe("runMendLoop", () => {
 			"const x: number",
 		);
 	});
+
+	it("stubOnFailure: applies @ts-expect-error when the loop fails and flips stopReason to 'stubbed'", async () => {
+		const brokenPath = path.join(workspace, "broken.ts");
+		fs.writeFileSync(brokenPath, "export const x: number = 'hello';\n");
+		const context = buildContext(workspace, ["broken.ts"]);
+		expect(context.diagnostics.length).toBeGreaterThan(0);
+
+		// LLM that never produces a valid patch — forces noProgress → stub.
+		const fakeLLM: LLMCall = vi.fn(async () => ({
+			text: "no patches here",
+			inputTokens: 50,
+			outputTokens: 10,
+		}));
+
+		const result = await runMendLoop({
+			context,
+			llm: llmConfig,
+			maxIterations: 1,
+			stubOnFailure: true,
+			_callLLM: fakeLLM,
+		});
+
+		expect(result.passed).toBe(true);
+		expect(result.stopReason).toBe("stubbed");
+		expect(result.stubs).toBeDefined();
+		expect(result.stubs!.length).toBeGreaterThan(0);
+		expect(result.stubs![0].codes).toContain("TS2322");
+
+		const post = fs.readFileSync(brokenPath, "utf-8");
+		expect(post).toContain("@ts-expect-error - tsfix: TS2322");
+		// Re-validate: tsc should now be clean.
+		const postTsc = runInProcessTsc({
+			workspaceRoot: workspace,
+			generatedFiles: [brokenPath],
+			logger: noopLogger,
+		});
+		expect(postTsc.diagnostics.filter((d: Diagnostic) => d.category === "error")).toEqual([]);
+	});
+
+	it("stubOnFailure: false (default) — leaves errors in place when the loop fails", async () => {
+		const brokenPath = path.join(workspace, "broken.ts");
+		fs.writeFileSync(brokenPath, "export const x: number = 'hello';\n");
+		const context = buildContext(workspace, ["broken.ts"]);
+
+		const fakeLLM: LLMCall = vi.fn(async () => ({
+			text: "no patches",
+			inputTokens: 50,
+			outputTokens: 10,
+		}));
+
+		const result = await runMendLoop({
+			context,
+			llm: llmConfig,
+			maxIterations: 1,
+			_callLLM: fakeLLM,
+		});
+
+		expect(result.passed).toBe(false);
+		expect(result.stopReason).not.toBe("stubbed");
+		expect(result.stubs).toBeUndefined();
+		// File untouched
+		const post = fs.readFileSync(brokenPath, "utf-8");
+		expect(post).not.toContain("@ts-expect-error");
+	});
+
+	it("stubOnFailure with dryRun: true — does NOT apply stubs (dry-run takes precedence)", async () => {
+		const brokenPath = path.join(workspace, "broken.ts");
+		fs.writeFileSync(brokenPath, "export const x: number = 'hello';\n");
+		const context = buildContext(workspace, ["broken.ts"]);
+
+		const fakeLLM: LLMCall = vi.fn(async () => ({
+			text: "no patches",
+			inputTokens: 50,
+			outputTokens: 10,
+		}));
+
+		const result = await runMendLoop({
+			context,
+			llm: llmConfig,
+			maxIterations: 1,
+			dryRun: true,
+			stubOnFailure: true,
+			_callLLM: fakeLLM,
+		});
+
+		expect(result.stubs).toBeUndefined();
+		expect(fs.readFileSync(brokenPath, "utf-8")).not.toContain("@ts-expect-error");
+	});
 });
