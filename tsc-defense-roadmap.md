@@ -1,30 +1,28 @@
 # `@shipispec/tsfix` — Project Roadmap
 
-> Generated: 2026-05-03. Revised after feedback pass.
+> Generated: 2026-05-03. Revised after feedback pass. Last updated 2026-05-14 (D3 reversed, Phase 2 marked complete after v0.4.0 merge).
 > North star: ship a focused, trustable OSS package that vibe coders can drop into any project — not a super-app.
 
 ---
 
-## Decisions still open
+## Decisions (resolved)
 
-These are load-bearing — answers determine downstream phase shapes. Stub here until decided.
-
-| # | Question | Why it matters | Current lean |
-|---|---|---|---|
-| D1 | Is v0.1.0 going to npm publicly under `@shipispec/tsfix`? | Phase 0 is "internal cleanup" vs "pre-publish hardening" — different bar | Yes (drives Phase 1 prep) |
-| D2 | If workspace lacks `typescript`, hard error or bundled fallback? | Determines Phase 1a complexity | Hard error + `peerDependencies` declaration (preserves lib-path fix; matches typical OSS bin convention) |
-| D3 | Mend agents into THIS package, or sister `@shipispec/tsmend`? | Determines whether `MendContext` is internal API or stable public API | Sister package (keeps this one Layer-0/1 focused; mend has different release cadence) |
-| D4 | Support Node 20.x, or require Node 23+? | Determines whether the in-process tsc Node-23-startup-pause workaround is still needed | Node 20.x minimum (matches VS Code Extension Host runtime) |
-| D5 | Is the OSS audience CLI users or library users? | Determines README emphasis | Both — CLI as the headline, library API as the secondary section |
+| # | Question | Resolution |
+|---|---|---|
+| D1 | Is v0.1.0 going to npm publicly under `@shipispec/tsfix`? | **Yes.** Published 2026-05-04. v0.3.0 currently live; v0.4.0 ready to publish. |
+| D2 | If workspace lacks `typescript`, hard error or bundled fallback? | **Hard error + `peerDependencies` declaration.** Preserves lib-path fix; matches typical OSS bin convention. |
+| D3 | Mend agents into THIS package, or sister `@shipispec/tsmend`? | **In-package.** Originally decided as "sister package" (2026-05-03). **Reversed 2026-05-14** after the sister package proved to be pre-publish (`private: true`) and the two had effectively zero independent consumers — folding the work in eliminated a release-coordination tax that wasn't paying for itself. Layer 2 ships in `@shipispec/tsfix` v0.4.0; tsmend repo archived with a MOVED pointer. |
+| D4 | Support Node 20.x, or require Node 23+? | **Node 20.x minimum.** Matches VS Code Extension Host runtime. |
+| D5 | Is the OSS audience CLI users or library users? | **Both.** CLI as the headline (Layer 0/1 default), library API as the secondary section. Layer 2 is library-API-only. |
 
 ---
 
 ## Guiding constraints
 
-1. **No scope creep into spectoship2 pipeline concerns.** The package knows nothing about specs, tasks, or models.
+1. **No scope creep into spectoship2 pipeline concerns.** The package knows nothing about specs, tasks, or models — only the `MendContext` shape, which is structural and consumer-agnostic.
 2. **Every new error code or fix name requires a fixture.** The trust model is only as good as its pins.
-3. **Dependency count stays near zero.** `typescript` (peer) only. No bundlers, no AST libs, no LLM SDKs in this package.
-4. **Ship the smallest thing that's useful in isolation.** A vibe coder should be able to `npx @shipispec/tsfix ./my-project` and get real value with zero config.
+3. **Dependency count stays small and justified.** Originally "near zero" (Layer 0/1 only). Since v0.4.0 the runtime deps are: `@ai-sdk/anthropic`, `ai`. Dev deps: `ts-morph`, `esbuild`, `tsx`, `vitest`, `typescript`. Layer 2 is opt-in — the CLI default path still only uses `typescript`, so a caller who never invokes `runMendLoop` pays no LLM cost.
+4. **Ship the smallest thing that's useful in isolation.** A vibe coder should be able to `npx @shipispec/tsfix ./my-project` and get real value with zero config and no API key.
 
 ---
 
@@ -153,20 +151,19 @@ Fail if any fixture regresses. This makes the fixture set the real CI gate.
 
 ---
 
-### 1c — Public README rewrite
-The current README is an internal orientation doc — it presupposes context (the SpecToShip pipeline, empirical 80% number). The OSS audience doesn't have that context. The rewrite is a marketing concern, not a docs concern.
+### 1c — Public README rewrite ✅ (2026-05-07 for v0.3.0; rewritten again 2026-05-14 for v0.4.0)
 
-Structure (top to bottom):
-1. **Tagline** — one sentence, no jargon. e.g. "Headless TypeScript error recovery: borrow VS Code's Quick Fix engine to auto-resolve TS2304/2305/2551/2552/2724 before they reach a human."
-2. **Before/after diff** — concrete example of broken code → fixed code, with the actual command that did it
-3. **30-second cold start** — `npx @shipispec/tsfix ./my-project`, what they'll see, what exit code means what
-4. **What it fixes / does NOT fix** — 5-codes table from STATUS.md + the explicit non-goals (no LLM, no style fixes, no structural rewrites)
-5. **The four-layer model** — simplified diagram showing "this package handles Layer 0–1; Layers 2–4 are your problem (or @shipispec/tsmend's)"
-6. **Library API** — for callers wiring this into their own pipeline
-7. **Contributing** — the "probe → fixture → allowlist change" protocol from ARCHITECTURE.md §8
-8. **Trust model** — "this loads `typescript` from your workspace's `node_modules`. Only run on workspaces you trust." (See M2.)
+First public README landed alongside v0.3.0. Rewritten again at v0.4.0 to cover Layer 2 (in-package, opt-in) — see `README.md`. Internal-orientation README preserved at `docs/internal-orientation.md`.
 
-The current README content moves into `INTERNAL.md` or stays as `docs/internal-orientation.md` — useful for the project but not the front door.
+Structure of the current public README (top to bottom):
+1. **Tagline** — covers both Layer 0/1 (deterministic) and Layer 2 (LLM mend, opt-in).
+2. **Before/after diff** — concrete Layer 0 example.
+3. **30-second cold start** — `npx @shipispec/tsfix ./my-project`. The CLI is Layer 0/1 only; Layer 2 is library-API.
+4. **What it fixes / does NOT fix** — 5-codes table for Layer 0, then a Layer 2 section for what escapes (TS2339, TS7006, TS2741, etc.).
+5. **The four-layer model** — Layer 0/1/2 in this package; Layer 3/4 planned.
+6. **Library API** — split into Layer 0/1 and Layer 2 sections with usage examples.
+7. **Trust model** — Layer 0/1 has zero network surface; Layer 2 calls Anthropic — explicit warning.
+8. **Contributing** — probe → fixture → allowlist for Layer 0; hand-author or generate for Layer 2.
 
 ---
 
@@ -183,97 +180,62 @@ Before public launch, close the highest-risk gaps in the fixture set:
 
 ---
 
-## Phase 2 — v0.2: Extract LLM Mend Layers (sister package)
-**Goal:** Bring Layers 2–4 into a sister package `@shipispec/tsmend` (per D3) so the deterministic stack and the LLM stack ship independently.
+## Phase 2 — Layer 2 LLM mend (in-package) ✅ (2026-05-14, v0.4.0)
 
-Why a sister package, not this one:
-- Different release cadence (Layer 0–1 is stable; mend prompts churn)
-- Different dep tree (mend pulls in Vercel AI SDK + Zod; we don't want that here)
-- `@shipispec/tsfix` stays Layer 0–1 only — the bet's purest form
+**Outcome:** Layer 2 single-file LLM mend ships in `@shipispec/tsfix` v0.4.0. The originally-planned sister package `@shipispec/tsmend` was folded into tsfix instead — see D3 above for the reversal rationale.
 
-This phase plans the extraction; v0.2 of THIS package only changes its result type to expose enough info for `@shipispec/tsmend` to consume.
+### 2a — `MendContext` interface ✅ (2026-05-07, shipped in tsfix v0.3.0)
 
-### 2a — Design `MendContext` interface
-The blocker for extraction is that `mendAgent` reads `ParsedTask` AND `ParsedFeatureSpec` — both spectoship2-internal types with spec text, prior tasks, and acceptance criteria baked in.
+Public types `MendContext`, `LayerEvent`, `Diagnostic` shipped as additive exports in tsfix v0.3.0 — before any Layer 2 code landed, so the contract was reviewable independently of the implementation.
 
-Verified against current code:
-- `mendAgent.ts:17` — `import type { ParsedTask, ParsedFeatureSpec }`
-- `mendArchitect.ts:30` — same imports
-- `multiFileMend.ts:36` — same imports
-- `mendAgent.ts:599` — `readExistingTestFiles(workspaceRoot, task)` — agents read existing tests to avoid breaking them
-
-Sketch v2 of the interface — must cover everything the agents actually read today:
+The interface stayed structural and consumer-agnostic (no `ParsedTask` / `ParsedFeatureSpec` leak from spectoship2). Adapter ownership: any caller (including spectoship2) constructs a `MendContext` from its own domain types.
 
 ```ts
-// Defined in @shipispec/tsfix (this package), so both detection
-// and mend can speak the same shape. Mend lives in @shipispec/tsmend.
 export interface MendContext {
-  // Workspace fundamentals (mend writes files, runs tests)
   workspaceRoot: string;
-
-  // Task scope
-  taskDescription: string;
-  erroredFiles: string[];                 // absolute paths
-  diagnostics: Diagnostic[];              // structured tsc output
-
-  // Feature scope (mend agents currently read this)
-  featureSpecText?: string;               // the spec markdown as written
-  acceptanceCriteria?: string;            // testable AC from the spec
-  siblingTasks?: Array<{                  // other tasks in the same feature
+  diagnostics: Diagnostic[];
+  erroredFiles: string[];
+  taskDescription?: string;
+  featureSpecText?: string;
+  acceptanceCriteria?: string;
+  siblingTasks?: Array<{
     description: string;
     files: string[];
     status: "pending" | "completed" | "failed";
   }>;
-
-  // Prior context (current `priorTaskExports.ts` injects this)
-  priorTaskExports?: string;              // public API surface from earlier tasks
-  installedTypes?: string;                // public API surface from npm deps
+  priorTaskExports?: string;
+  installedTypes?: string;
 }
 ```
 
-Adapter ownership: `spectoship2` provides `ParsedTask + ParsedFeatureSpec → MendContext`. Neither this package nor `@shipispec/tsmend` imports `ParsedTask`.
+**Back-pressure decision (M4):** Mend caller re-invokes the loop (option a). Layer 2's output is code; the next Layer 0 pass is the caller's choice. Not auto-chained.
 
-**Open: back-pressure (M4).** When mend writes new files, should `runValidationLoop` automatically re-trigger Layer 0 on the result? Two options:
-- (a) Mend caller re-invokes the loop (current implicit behavior)
-- (b) Loop accepts a `mendCallback?: (ctx: MendContext) => Promise<void>` and re-validates inside
+### 2b — Layer 2 implementation ✅ (2026-05-14)
 
-Lean (a) — keeps responsibilities clean. Mend's output IS code; the next loop iteration is the caller's choice.
+Originally planned as porting `mendAgent + mendArchitect + multiFileMend + repairAgent` from spectoship2. Implementation took a different path: a fresh Layer 2 surface designed against the `MendContext` contract from scratch, rather than porting the spectoship2 agents. Result:
 
----
+| Original plan (port) | Shipped instead |
+|---|---|
+| Port 4 spectoship2 files (~1,967 LOC) | 4 fresh src files (~1,200 LOC): `typeContext`, `mendAgent`, `applyEditBlock`, `runMendLoop` |
+| Architect + editor split per `mendArchitect` | Single-call `mendSingleFile` with type-context injection — empirically converges in 1 iteration on 97% of fixtures |
+| Custom prompt scaffolding | Vercel AI SDK + `@ai-sdk/anthropic`, top-level `system:` parameter (v6 pattern) |
+| ad-hoc patch format | Aider-style SEARCH/REPLACE with 3-tier fuzzy applier (`applyEditBlock`) |
+| Custom retry logic | `runMendLoop` — bounded retry with error-signature-set no-progress / regression detection |
 
-### 2b — Extract mend agents into `@shipispec/tsmend`
+The architectural moat is **`getTypeContext`**: resolves an error site to its declaring type via `getTypeAtLocation()` + `getDeclarations()`, slices ±3 lines around the error site and ±20 lines around the declaration. Special case for `PropertyAccessExpression` so TS2339 resolves to the *receiver's* type. No other OSS tool calls the TypeChecker like this; Aider/Cline/Cursor use generic grep or repo-maps.
 
-Move in **call-graph leaves first** order (verified against current imports):
+**The spectoship2 mend agents** (`mendAgent`, `mendArchitect`, `multiFileMend`, `repairAgent`) remain in `spectoship2/src/pipeline/` for now — unaffected by this work. The Phase 2 deprecation plan (have spectoship2 import Layer 2 from `@shipispec/tsfix` instead) is now optional rather than load-bearing — see Deprecation policy below.
 
-1. **`multiFileMend`** — no internal mend deps; depends on `MendContext` (extracted first because `mendAgent` calls into it)
-2. **`mendArchitect`** — no internal mend deps; depends on `MendContext`
-3. **`mendAgent`** — depends on `multiFileMend` (mendAgent.ts:23). Must come after #1.
-4. **`repairAgent`** — separate concern (skipped-task recovery); depends on `siblingTasks` field of `MendContext`
+### 2c — Layer 2 fixtures + benchmark ✅ (2026-05-14)
 
-Each extraction needs:
-- New fixture class in `@shipispec/tsmend/fixtures/`: "Layer 0 cannot fix, Layer 2 should fix"
-- Integration test confirming the layer doesn't regress Layer 0's fixable set (run THIS package's benchmark from sister-package CI as a smoke test)
-- Cost annotation: each mend call returns `{tokensIn, tokensOut, model, latencyMs, costUsd}` — surfaced via the per-layer event callback (see 3a)
+- 35 Layer-2 fixtures total: 3 hand-authored minimal + 2 realistic + 30 ts-morph-generated via `npm run generate-fixtures`.
+- `npm run benchmark:llm` runs them against Anthropic. Skips silently when `ANTHROPIC_API_KEY` is unset.
+- CI gains a Layer-2 step gated on the secret.
+- 35/35 pass on `claude-haiku-4-5` at $0.036 total ($0.001/fixture avg), iter-1 success 97%, P95 latency ~1.5s.
 
----
+### 2d — Unified result type (deferred to v0.5)
 
-### 2c — Unified result type
-After v0.2, `runValidationLoop` should return a richer result:
-```ts
-{
-  errorsBeforeLayer0: number;
-  errorsAfterLayer0: number;
-  lspFixesApplied: number;
-  filesEdited: string[];
-  remainingDiagnostics: Diagnostic[];
-  // v0.2-added fields below — present on every result, even if mend didn't run
-  errorsAfterAllLayers: number;     // === errorsAfterLayer0 if no mend ran
-  mendFixesApplied: number;         // 0 if no mend ran
-  totalCostUsd: number;             // 0 if no mend ran
-}
-```
-
-The result shape is **purely additive** — old code keeps compiling unchanged because TS structural typing ignores extra fields. v0.1 callers receive the new fields whether they want them or not; they just won't reference them. v0.2 callers can consume them.
+Originally planned: extend `runValidationLoop` result with `errorsAfterAllLayers`, `mendFixesApplied`, `totalCostUsd`. Deferred — the v0.4.0 design keeps Layer 0/1 and Layer 2 as separate entry points (`runValidationLoop` vs `runMendLoop`), so the unified result type doesn't have a natural home yet. Will land alongside the `onLayerEvent` callback in Phase 3a.
 
 ---
 
@@ -347,13 +309,11 @@ These are documented in ARCHITECTURE.md §12. Deferring until there's real data:
 
 ## Deprecation policy
 
-Once Phase 2 ships `@shipispec/tsmend` (per D3), the existing `spectoship2/src/pipeline/{mendAgent,mendArchitect,multiFileMend,repairAgent}.ts` become candidates for removal:
+**spectoship2 mend agents** (`mendAgent`, `mendArchitect`, `multiFileMend`, `repairAgent`) are unaffected by the v0.4.0 merge — they continue to live in `spectoship2/src/pipeline/` and serve spectoship2's pipeline. They are *not* equivalent to tsfix v0.4.0's Layer 2 (different prompt strategy, different patch format, depend on `ParsedTask`/`ParsedFeatureSpec`).
 
-- **`spectoship2 vN`** (mend extraction lands): pipeline imports from `@shipispec/tsmend`. The local files become re-export shims (same pattern as today's `validatorInProcess.ts` shim).
-- **`spectoship2 vN+1`** (one minor version later): mark shims `@deprecated`; emit warning at import time.
-- **`spectoship2 vN+2`**: remove shims entirely.
+Optional future path: have spectoship2 migrate to `@shipispec/tsfix`'s Layer 2 surface by writing a `ParsedTask → MendContext` adapter. Decision deferred — not load-bearing until spectoship2 has a reason to consolidate.
 
-Same pattern for the existing `validatorInProcess` / `tsLanguageServiceFixer` shims — they're already in the "shim" stage; mark them `@deprecated` once `spectoship2` is updated to import from `@shipispec/tsfix` directly.
+**validatorInProcess / tsLanguageServiceFixer shims** in spectoship2 (the v0.1.0-era re-export shims) — same status as before. Mark them `@deprecated` once spectoship2 is updated to import from `@shipispec/tsfix` directly.
 
 ---
 
@@ -361,12 +321,13 @@ Same pattern for the existing `validatorInProcess` / `tsLanguageServiceFixer` sh
 
 Phases are ordered, not time-bound. Effort estimates omitted because the cadence is unknown.
 
-| Phase | Milestone | Done signal (concrete) |
+| Phase | Milestone | Status |
 |---|---|---|
-| **0a–0c** | v0.1 stabilized | A fresh clone of just `tsc-defense-stack/` (no sibling packages) can `npm install && npm run benchmark` and see all 14 fixtures pass. Zero stale files. |
-| **0.5** | v0.1.0 on npm | `npm view @shipispec/tsfix version` returns `0.1.0`; `npx @shipispec/tsfix --help` works |
-| **1a–1d** | OSS launch-ready | `npx @shipispec/tsfix ./my-project` works cold on a fresh machine; CI green on all fixtures (14+ by then); README is the front door, not internal orientation |
-| **2a–2c** | v0.2 shipped | `@shipispec/tsmend` published; `MendContext` interface stable; this package's result type expanded with v0.2 fields; Layer 2 fixtures pass in sister-package CI |
-| **3a–3c** | v0.3 shipped | `onLayerEvent` callback supported; first 5 real-failure fixtures captured and passing; deprecation timeline started for spectoship2 shims |
+| **0a–0c** | v0.1 stabilized | ✅ 2026-05-03 — fresh clone runs `npm install && npm run benchmark`, all 14 fixtures pass |
+| **0.5** | v0.1.0 on npm | ✅ 2026-05-04 — `npm view @shipispec/tsfix version` returns `0.4.0` (live: `0.3.0`) |
+| **1a–1d** | OSS launch-ready | ✅ 2026-05-07 (v0.3.0) — `npx @shipispec/tsfix ./my-project` works cold; CI green; public README |
+| **2a–2d** | Layer 2 in-package | ✅ 2026-05-14 (v0.4.0 merged) — `runMendLoop` + `mendSingleFile` shipped, 35/35 Layer-2 fixtures pass on Haiku 4.5, opt-in via library API |
+| **3a–3c** | Telemetry + real-failure pipeline | pending — `onLayerEvent` callback, unified result type, first 5 real-failure fixtures, shared Program profiling |
+| **4+** | Layers 3–4 | pending — multi-file mend via `findReferences()`, stub-and-continue escape hatch |
 
-**The anti-pattern to avoid:** Don't start Phase 2 (mend extraction) before Phase 1 (public bin + CI) is done. The extraction will be messy. You want the benchmark as a CI safety net before you move the mend agents, not after.
+**Lessons from the path:** "Don't start Phase 2 (mend extraction) before Phase 1 (public bin + CI) is done" held — by the time Layer 2 work landed, the benchmark and matrix gates were already there as CI safety nets. The bigger lesson was D3: building tsmend as a sister package first, then folding it back in, was the right call. The sister-package phase forced clean contract design (MendContext shipped in v0.3.0 *before* any mend code), and the merge happened only once the API surface had stabilized through real implementation work. The two-step "split, design contract, merge" was slower than "in-package from day one" would have been, but produced a cleaner public API.

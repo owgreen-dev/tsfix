@@ -1,12 +1,15 @@
 # tsfix
 
-> Headless TypeScript error recovery — auto-resolve `TS2304`, `TS2305`, `TS2551`, `TS2552`, `TS2724` before they reach a human.
+> Two-layer TypeScript error recovery for LLM-generated code — fix `TS2304`, `TS2305`, `TS2551`, `TS2552`, `TS2724` deterministically with the same engine that powers VS Code's Quick Fix, and escalate the rest to a single-file LLM mend.
 
-`@shipispec/tsfix` borrows the same TypeScript Language Service that powers VS Code's "Quick Fix" lightbulb and runs it as a CLI. Point it at a workspace, it fixes typos, missing imports, and did-you-mean errors deterministically — no LLM, no calls home, no config.
+`@shipispec/tsfix` is what you reach for when you've just generated a few hundred files of TypeScript with an LLM and `tsc --noEmit` is screaming at you. It runs in two layers:
 
-Built for the case where you've just generated a few hundred files of TypeScript with an LLM and `tsc --noEmit` is screaming at you.
+- **Layer 0/1** — Deterministic. Borrows the same TypeScript Language Service that powers VS Code's "Quick Fix" lightbulb and runs it as a CLI. Fixes typos, missing imports, and did-you-mean errors with no LLM, no network, no config.
+- **Layer 2** — Opt-in. A single-file LLM mend agent (Vercel AI SDK + Anthropic) that picks up what Layer 0 abstains on: TS2339 (property doesn't exist), TS7006 (implicit `any`), TS2741 (missing required prop), and other cases where the LSP can't statically derive the fix. Driven by **type-context injection** — when tsc says "Property 'foo' doesn't exist on type 'Bar'", tsfix resolves the `Bar` declaration via the TypeChecker and feeds its source to the model.
 
-## Before / after
+Layer 2 only runs if you explicitly call its API or set `ANTHROPIC_API_KEY` and use the `runMendLoop` entry point. The default `tsfix --workspace ...` CLI is still **Layer 0/1 only**.
+
+## Before / after (Layer 0)
 
 ```
 $ tsc --noEmit
@@ -62,7 +65,9 @@ npx @shipispec/tsfix --workspace . --json
 | `--verbose` | Per-fix logging. |
 | `--help` | Print usage. |
 
-## What it fixes
+The CLI does not run Layer 2 — call the library API for that (below).
+
+## What Layer 0 fixes
 
 | TS code | Meaning | What tsfix does |
 |---|---|---|
@@ -72,11 +77,11 @@ npx @shipispec/tsfix --workspace . --json
 | `TS2552` | Cannot find name, did you mean Y | Spelling fix |
 | `TS2724` | Module member did-you-mean | Import rename |
 
-Against a 14-fixture benchmark spanning typos, did-you-mean cases, multi-file ripples, and 4 API-drift scenarios: **14/14 fixtures pass and 14/25 errors are auto-fixed (56%).** The remaining errors are intentionally outside Layer 0's scope (see below).
+Against a 14-fixture benchmark spanning typos, did-you-mean cases, multi-file ripples, and 4 API-drift scenarios: **14/14 fixtures pass and 14/25 errors are auto-fixed (56%).** The remaining errors are intentionally outside Layer 0's scope and escape to Layer 2.
 
-## What it does *not* fix
+## What Layer 0 does *not* fix (Layer 2 picks these up)
 
-By design, tsfix only applies fixes that are **deterministic** and **non-structural**. It will refuse to:
+By design, Layer 0 only applies fixes that are **deterministic** and **non-structural**. It refuses to:
 
 - Add or remove function declarations
 - Insert type annotations or change types
@@ -84,24 +89,32 @@ By design, tsfix only applies fixes that are **deterministic** and **non-structu
 - Rewrite JSX trees
 - Add object-literal stub properties
 
-The internal allowlist is two-layered: error codes (`SAFE_FIXABLE_CODES`) and Quick Fix names (`SAFE_FIX_NAMES = ['import', 'fixImport', 'spelling', 'fixSpelling']`). When the language service offers anything outside that allowlist, tsfix abstains and surfaces the error in the result so a higher layer (LLM, human) can pick it up.
+The internal allowlist is two-layered: error codes (`SAFE_FIXABLE_CODES`) and Quick Fix names (`SAFE_FIX_NAMES = ['import', 'fixImport', 'spelling', 'fixSpelling']`). When the language service offers anything outside that allowlist, Layer 0 abstains and surfaces the error so Layer 2 (or a human) can pick it up.
+
+Layer 2 is built for the cases the LSP can't statically resolve:
+
+- `TS2339` — Property doesn't exist on type. The LLM needs to see *the type's declaration* to decide whether the receiver should grow a field, the call site has a typo with no near-match, or the receiver is the wrong type entirely.
+- `TS7006` — Implicit `any`. The LLM picks the right annotation from surrounding context.
+- `TS2741` — Missing required property. The LLM sees the contextual type and supplies a real value, not a placeholder.
+
+Against a 35-fixture Layer-2 benchmark (3 hand-authored minimal + 2 realistic + 30 ts-morph-generated mutations across TS2339/TS7006/TS2741), **35/35 pass at $0.001/fixture avg, P95 latency ~1.5s on `claude-haiku-4-5`.** Caveat: the 30 generated fixtures are mutations of 3 seeds — real-world diversity will move these numbers.
 
 ## The four-layer model
 
-tsfix is **Layer 0–1** of a larger error-recovery stack. The other layers are LLM-driven and live elsewhere (in your own code, or in companion packages):
-
 ```
 Layer 0 — Prevention      (prompt rules, exported-API injection — your problem)
-Layer 1 — tsfix           (this package: deterministic auto-fix)
-─────────────────────────────────────────────────────────────────────────
-Layer 2 — Single-file LLM mend (architect + editor split)
-Layer 3 — Multi-file LLM mend  (blast-radius search/replace)
-Layer 4 — Stub-and-continue    (escape hatch)
+Layer 1 — Deterministic   (this package: LSP auto-fix, CLI default)
+Layer 2 — Single-file LLM (this package: opt-in via library API)
+─────────────────────────────────────────────────────────────────
+Layer 3 — Multi-file LLM  (planned: blast-radius search/replace via findReferences)
+Layer 4 — Stub-and-continue (planned: escape hatch)
 ```
 
-The bet: roughly half of TypeScript errors in LLM output are deterministically fixable. By catching them in Layer 1, you dodge the LLM tax (latency, cost, nondeterminism) on the easy half.
+The bet: roughly half of TypeScript errors in LLM output are deterministically fixable. By catching them in Layer 1 you dodge the LLM tax (latency, cost, nondeterminism) on the easy half. Layer 2 takes the other half — but only when you explicitly invoke it.
 
 ## Library API
+
+### Layer 0/1 — deterministic loop
 
 ```typescript
 import { runValidationLoop } from '@shipispec/tsfix';
@@ -121,24 +134,62 @@ result.lspFixer.filesEdited;  // string[]
 result.passed;                // boolean — true if errorsAfter === 0
 ```
 
-Other exports:
+Other Layer 0/1 exports:
 
 - `runInProcessTsc(opts)` — validation only, no fixer. Returns structured diagnostics.
 - `runLSPFixerPass(opts)` — Layer 0 fixer alone, no validation loop wrapper.
 - `discoverTsFiles(workspaceRoot)` — file-walking helper. Skips `node_modules`, `.next`, `dist`, `build`, `out`, `coverage`, `.git`.
 
+### Layer 2 — LLM mend (opt-in)
+
+```typescript
+import { runValidationLoop, runMendLoop } from '@shipispec/tsfix';
+
+// Layer 0/1 first.
+const layer1 = runValidationLoop({ workspaceRoot });
+
+if (!layer1.passed) {
+  // Layer 2 escalation.
+  const layer2 = await runMendLoop({
+    context: {
+      workspaceRoot,
+      diagnostics: layer1.remainingDiagnostics,
+      erroredFiles: layer1.lspFixer.filesWithErrors,
+      // Optional fields that improve mend quality:
+      // taskDescription: 'Build a user CRUD module',
+      // featureSpecText: '...the markdown spec...',
+      // acceptanceCriteria: '...',
+      // installedTypes: '...',  // compact API surface from npm deps
+    },
+    llm: {
+      provider: 'anthropic',
+      model: 'claude-haiku-4-5',
+      apiKey: process.env.ANTHROPIC_API_KEY,
+    },
+    maxIterations: 3,
+  });
+
+  console.log(layer2.stopReason);  // 'fixed' | 'noProgress' | 'regressed' | 'maxIterations'
+  console.log(layer2.totalCostUsd);
+}
+```
+
+Other Layer 2 exports:
+
+- `mendSingleFile(opts)` — one LLM call for one file. The building block under `runMendLoop`.
+- `getTypeContext(opts)` — resolve a `Diagnostic` to its declaring type via the TS Language Service and return ±N lines around the declaration. The architectural moat — every other LLM-driven repair tool uses generic grep or repo-maps.
+- `parseEditBlocks(text)` / `applyEditBlocks(opts)` — Aider-style SEARCH/REPLACE patch parser + 3-tier fuzzy applier.
+- Types: `MendContext`, `LayerEvent`, `Diagnostic`, plus the per-function option/result types.
+
 ## Trust model
 
-tsfix loads `typescript` from your workspace's `node_modules` — it does **not** bundle its own. This is intentional: it ensures the fixer behaves identically to the `tsc` your project actually compiles with.
+Layer 0/1 loads `typescript` from your workspace's `node_modules` — it does **not** bundle its own. This ensures the fixer behaves identically to the `tsc` your project actually compiles with.
 
 > **Run tsfix only on workspaces you trust.** Loading `typescript` from an attacker-controlled `node_modules` is equivalent to running `node_modules/.bin/tsc` against it.
 
-Other surface:
+**Network surface (Layer 0/1):** none. No telemetry, no calls home, no background processes, no config files written outside `--workspace`.
 
-- No network calls.
-- No telemetry.
-- No background processes.
-- No config files written or modified outside `--workspace`.
+**Network surface (Layer 2):** every `mendSingleFile` call hits Anthropic's API via the Vercel AI SDK. The source files in `MendContext.erroredFiles` and the resolved type-context slices are sent in the prompt. If your code is sensitive, do not call Layer 2 — the CLI never does, and the library exports are explicit.
 
 ## Engines
 
@@ -154,7 +205,7 @@ run: npm install --save-dev typescript
 
 ## Contributing
 
-The contract for adding a fix:
+### Adding a Layer-0 fix
 
 1. **Probe** — write a tiny test workspace with the exact error you want fixable. Drop it under `fixtures/<descriptive-name>/` with an `expected.json` declaring `errorsBefore`, `errorsAfterMax`, `lspFixesAppliedMin/Max`, and `mustPass`.
 2. **Verify** — run `npm run benchmark -- --fixture <name>` and inspect what the language service offers (the `fix.fixName` field).
@@ -163,7 +214,18 @@ The contract for adding a fix:
 
 Each new code/fix-name pair gets its own fixture. We don't trust the language service blindly — we trust it under specific, pinned conditions.
 
-`npm run matrix` runs the same package against 6 distinct project shapes (Next.js, Vite + React, plain `nodenext`, plain `bundler`, plain CommonJS, monorepo with project references). It builds the local tarball and exercises it cold; pre-publish gate.
+### Adding a Layer-2 fixture
+
+Layer-2 fixtures live under `fixtures/` alongside Layer-0 ones, identified by `expectedErrorCode` (singular) or `costUsdMax` in their `expected.json`. The Layer-0 benchmark skips them; `npm run benchmark:llm` runs them against Anthropic.
+
+- Hand-author one under `fixtures/mend-<descriptive-name>/` for new error classes.
+- Or generate one via `npm run generate-fixtures -- --code=TS2339 --seed=apiRouter.ts --count=10 --rng-seed=42`. The generator validates every mutation through Layer 0 first to confirm Layer 0 abstains (otherwise it's not Layer 2 territory).
+
+### Pre-publish gates
+
+- `npm run benchmark` — Layer 0, 14 fixtures, no network.
+- `npm run benchmark:llm` — Layer 2, 35 fixtures, requires `ANTHROPIC_API_KEY`. Total cost ~$0.04 per run.
+- `npm run matrix` — runs the local tarball against 6 distinct project shapes (Next.js, Vite + React, plain `nodenext`, plain `bundler`, plain CommonJS, monorepo with project references). Adds ~3 min; run manually before tagging.
 
 ## License
 
