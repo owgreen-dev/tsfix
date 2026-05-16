@@ -42,11 +42,14 @@ const sharedOptions = {
 		// AI SDK packages stay external: (1) `@vercel/oidc` (transitive of
 		// `ai`) uses dynamic require() patterns that fail under esbuild's
 		// ESM output at module-init time, breaking plain `node` execution;
-		// (2) keeping them external slims the bundle from ~1.3 MB to ~25 KB;
-		// (3) both are declared in `dependencies` so npm install pulls them
-		// in for consumers who use Layer 2.
+		// (2) keeping them external slims the bundle dramatically;
+		// (3) all are declared in `dependencies` so npm install pulls them
+		// in for consumers who use Layer 2. Add a line for any new provider
+		// (`@ai-sdk/X`) added to `buildLanguageModel` in `mendAgent.ts`.
 		"ai",
 		"@ai-sdk/anthropic",
+		"@ai-sdk/openai",
+		"@ai-sdk/google",
 	],
 	logLevel: "info",
 	// `import.meta.url` and Node built-in URL imports stay as-is.

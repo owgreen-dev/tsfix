@@ -322,7 +322,12 @@ export type {
 } from "./applyEditBlock.js";
 
 export { mendSingleFile } from "./mendAgent.js";
-export type { MendSingleFileOptions, MendSingleFileResult, LLMCall } from "./mendAgent.js";
+export type {
+	MendSingleFileOptions,
+	MendSingleFileResult,
+	LLMCall,
+	LLMProvider,
+} from "./mendAgent.js";
 
 export { runMendLoop } from "./runMendLoop.js";
 export type {

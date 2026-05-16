@@ -4,6 +4,31 @@ All notable changes to `@shipispec/tsfix` are documented here. Format follows [K
 
 ## [Unreleased]
 
+### Added (multi-provider — Tier 2)
+- **OpenAI and Google providers** for Layer 2. `runMendLoop` and `mendSingleFile` now accept `llm.provider: "anthropic" | "openai" | "google"` (was: `"anthropic"` only). Each provider uses its corresponding `@ai-sdk/X` package via a small `buildLanguageModel` factory in `mendAgent.ts`. The factory's `switch` is exhaustive — TypeScript flags missing cases if a new provider is added to the `LLMProvider` union.
+- **`LLMProvider` type** exported from `src/index.ts`. Re-exportable for callers building their own CLI / pipeline integrations.
+- **CLI `--llm-provider <name>`** flag — `anthropic` (default, back-compat), `openai`, or `google`. Invalid values exit 2 with a clear message.
+- **Per-provider default models** when `--llm-model` is omitted: `claude-haiku-4-5` for anthropic, `gpt-4o-mini` for openai, `gemini-1.5-flash` for google.
+- **Per-provider env var routing** in the CLI: `--llm-provider anthropic` → `ANTHROPIC_API_KEY`, `openai` → `OPENAI_API_KEY`, `google` → `GOOGLE_GENERATIVE_AI_API_KEY`. The error message names the exact missing var.
+- **Pricing table refreshed against current provider pricing pages (snapshot 2026-05-16):**
+  - **OpenAI:** `gpt-5-nano`, `gpt-5-mini`, `gpt-5`, `gpt-5.1`, `gpt-5.2`, `o3-mini`, `o4-mini`, `o3`. (v0.5.0's draft had `gpt-4o` / `gpt-4o-mini` — those are still callable but the gpt-5 family is the current default; default `--llm-model` for openai is now `gpt-5-mini`.)
+  - **Google:** `gemini-2.5-flash-lite`, `gemini-2.5-flash`, `gemini-2.5-pro`. (v0.5.0's draft had `gemini-1.5-*` — superseded by 2.5; default for google is now `gemini-2.5-flash`.)
+  - **Anthropic (corrects v0.5.0 bugs):** `claude-haiku-4-5` was listed at `$0.80 / $4.00` — actual is **`$1.00 / $5.00`** (v0.5.0 carried the older Haiku 3.5 numbers). `claude-opus-4-7` was listed at `$15.00 / $75.00` — actual is **`$5.00 / $25.00`** (the 4.5 release dropped Opus pricing 3×; v0.5.0 carried the Opus 4.1 numbers). Now also lists `-sonnet-4-6`, `-opus-4-5`, `-opus-4-6`, `-opus-4-1` so callers pinning any 4.x model get accurate cost estimates.
+  - **Cost impact for v0.5.0 users:** `--llm-budget-usd` enforcement on `claude-haiku-4-5` was ~20% under-estimating actual spend; on `claude-opus-4-7` was ~3× over-estimating (your budget triggered earlier than it should have). Both fixed.
+  - Newer / unlisted models still fall back to cost=0 with a logger warning — `--llm-budget-usd` won't trigger for unpriced models.
+- **CLI JSON report** `layer2.provider` field added.
+- **CLI human report** Layer-2 line now shows `<provider>/<model>` instead of just `<model>`.
+- **2 new cache tests** in `benchmark/cache.test.ts` covering provider-discrimination in the cache key + back-compat default to `anthropic` when provider is omitted (preserves v0.5.0 cache entries on upgrade).
+- **5 new CLI tests** in `cli/run-stack.test.ts` covering `--help` listing all three providers + env-var names, invalid `--llm-provider` rejection, per-provider env-var routing, and the default-provider-is-anthropic back-compat case.
+
+### Changed
+- **`LLMCall` type** input gains optional `provider?: LLMProvider`. Optional so v0.5.0 callers' `LLMCall` injections still type-check (their callbacks just ignore the new field).
+- **Cache key** at `benchmark/cache.ts` now includes provider: `sha256(systemBlock + " " + userBlock + " " + provider + " " + model)`. Provider defaults to `"anthropic"` when not passed → v0.5.0 cache entries remain valid for unchanged anthropic prompts.
+- **`scripts/build.mjs`** externalizes `@ai-sdk/openai` and `@ai-sdk/google` (in addition to `@ai-sdk/anthropic` and `ai`). Consumers who never invoke Layer 2 still don't load any AI SDK; consumers who do get whichever provider package they hit.
+- **Runtime dependencies added:** `@ai-sdk/openai@^3.0.64`, `@ai-sdk/google@^3.0.75`. Both are loaded lazily — the AI SDK package only loads when its corresponding provider is actually called.
+
+## [0.5.0] - 2026-05-16
+
 ### Added (Layer 4 — stub-and-continue escape hatch)
 - **`stubAndContinue(opts)`** — new public API. Inserts `// @ts-expect-error - tsfix: <codes> — <message>` immediately above each unresolved error site so `tsc --noEmit` exits 0. Closes the "tsfix never leaves the workspace worse than it found it" property. Uses `@ts-expect-error` (not `@ts-ignore`) so directives self-destruct once the underlying issue is fixed by other means.
 - **`runMendLoop` opt-in flag** — new `stubOnFailure?: boolean` option (default `false`). When the LLM loop terminates with leftover errors and the flag is set, Layer 4 runs automatically. New `"stubbed"` stop reason; new `stubs?: AppliedStub[]` result field with what was applied.

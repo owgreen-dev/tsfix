@@ -204,3 +204,61 @@ describe("CLI — Layer 2 flag (without making real LLM calls)", () => {
 		expect(report.layer2).toBeNull(); // Layer 2 only runs if errors survive Layer 0/1
 	});
 });
+
+describe("CLI — multi-provider (v0.6.0+)", () => {
+	beforeEach(() => {
+		fs.writeFileSync(
+			path.join(tempWorkspace, "src.ts"),
+			"export const x: number = 'string-literal';\n",
+		);
+	});
+
+	it("--help lists all three providers and their env-var names", () => {
+		const r = runCli(["--help"]);
+		expect(r.exitCode).toBe(0);
+		expect(r.stderr).toContain("--llm-provider");
+		expect(r.stderr).toContain("anthropic");
+		expect(r.stderr).toContain("openai");
+		expect(r.stderr).toContain("google");
+		expect(r.stderr).toContain("ANTHROPIC_API_KEY");
+		expect(r.stderr).toContain("OPENAI_API_KEY");
+		expect(r.stderr).toContain("GOOGLE_GENERATIVE_AI_API_KEY");
+	});
+
+	it("invalid --llm-provider value exits 2", () => {
+		const r = runCli(["--workspace", tempWorkspace, "--llm", "--llm-provider", "mistral"]);
+		expect(r.exitCode).toBe(2);
+		expect(r.stderr).toContain("--llm-provider");
+		expect(r.stderr).toContain("anthropic, openai, google");
+	});
+
+	it("--llm-provider openai checks OPENAI_API_KEY, not ANTHROPIC_API_KEY", () => {
+		// Set ANTHROPIC_API_KEY but NOT OPENAI_API_KEY → should still fail
+		// because we asked for openai.
+		const r = runCli(["--workspace", tempWorkspace, "--llm", "--llm-provider", "openai"], {
+			ANTHROPIC_API_KEY: "anthropic-key",
+			OPENAI_API_KEY: "",
+		});
+		expect(r.exitCode).toBe(2);
+		expect(r.stderr).toContain("OPENAI_API_KEY");
+		expect(r.stderr).not.toContain("ANTHROPIC_API_KEY");
+	});
+
+	it("--llm-provider google checks GOOGLE_GENERATIVE_AI_API_KEY", () => {
+		const r = runCli(["--workspace", tempWorkspace, "--llm", "--llm-provider", "google"], {
+			GOOGLE_GENERATIVE_AI_API_KEY: "",
+		});
+		expect(r.exitCode).toBe(2);
+		expect(r.stderr).toContain("GOOGLE_GENERATIVE_AI_API_KEY");
+	});
+
+	it("default provider is anthropic (back-compat with v0.5.0 callers)", () => {
+		// No --llm-provider flag, no ANTHROPIC_API_KEY → error mentions Anthropic.
+		const r = runCli(["--workspace", tempWorkspace, "--llm"], {
+			ANTHROPIC_API_KEY: "",
+		});
+		expect(r.exitCode).toBe(2);
+		expect(r.stderr).toContain("ANTHROPIC_API_KEY");
+		expect(r.stderr).toContain("anthropic");
+	});
+});

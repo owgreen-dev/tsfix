@@ -1,9 +1,11 @@
 /**
  * File-based response cache for the Layer-2 LLM benchmark.
  *
- * Cache key = sha256(systemBlock + " " + userBlock + " " + model). Any change
- * to the system prompt, the fixture content, or the model invalidates the
- * entry automatically (it's all in the hash). No manual invalidation needed.
+ * Cache key = sha256(systemBlock + " " + userBlock + " " + provider + " " + model).
+ * Any change to the system prompt, fixture content, provider, or model
+ * invalidates the entry automatically. Provider was added in v0.6.0 when
+ * multi-provider support landed — without it, two providers reusing the same
+ * model name (rare but possible) would collide.
  *
  * Storage: one JSON file per entry under `cacheDir/<hash>.json`. Each file is
  * tiny (the LLM response text + token counts), so 100 fixtures × ~3 KB =
@@ -29,12 +31,19 @@ export interface CacheStats {
 	misses: number;
 }
 
-export function cacheKey(systemBlock: string, userBlock: string, model: string): string {
+export function cacheKey(
+	systemBlock: string,
+	userBlock: string,
+	model: string,
+	provider: string = "anthropic",
+): string {
 	return crypto
 		.createHash("sha256")
 		.update(systemBlock)
 		.update(" ")
 		.update(userBlock)
+		.update(" ")
+		.update(provider)
 		.update(" ")
 		.update(model)
 		.digest("hex");
@@ -74,7 +83,7 @@ export function makeCachingLLMCall(
 ): LLMCall {
 	const { cacheDir, stats, bypass = false } = opts;
 	return async (params) => {
-		const key = cacheKey(params.systemBlock, params.userBlock, params.model);
+		const key = cacheKey(params.systemBlock, params.userBlock, params.model, params.provider);
 		if (!bypass) {
 			const cached = readCacheEntry(cacheDir, key);
 			if (cached) {
