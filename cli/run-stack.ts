@@ -1,23 +1,21 @@
 /**
- * Standalone TSC Defense Stack runner.
+ * tsfix CLI entry — bundled to `dist/cli.js` and run as
+ * `npx @shipispec/tsfix --workspace <path>`.
  *
- * Runs the deterministic layers (in-process tsc + LSP fixer) against an
- * arbitrary workspace and reports per-layer outcomes. No LLM calls.
- *
- * Usage:
- *   npx tsx tsc-defense-stack/cli/run-stack.ts --workspace <path>
- *   npx tsx tsc-defense-stack/cli/run-stack.ts --workspace <path> --json
- *   npx tsx tsc-defense-stack/cli/run-stack.ts --workspace <path> --no-lsp
- *
- * Why standalone: iterate on TSC reliability without running the full
- * SpecToShip pipeline (~$1 per run). See tsc-defense-stack/CLAUDE.md.
+ * Default path is Layer 0/1 only (deterministic LSP auto-fix; no network
+ * calls). Pass `--llm` to escalate the remaining errors to Layer 2
+ * (Anthropic-only today; multi-provider follows in a later PR).
  */
 
 import * as path from "node:path";
 import * as fs from "node:fs";
 import {
+	runInProcessTsc,
+	runMendLoop,
 	runValidationLoop,
 	discoverTsFiles,
+	type Diagnostic,
+	type MendContext,
 	type ValidationLoopResult,
 } from "../src/index.js";
 
@@ -28,6 +26,10 @@ interface CliArgs {
 	dryRun: boolean;
 	files: string[] | undefined;
 	verbose: boolean;
+	llm: boolean;
+	llmModel: string;
+	llmMaxIterations: number;
+	llmBudgetUsd: number | undefined;
 }
 
 interface StackReport {
@@ -39,6 +41,18 @@ interface StackReport {
 		filesEdited: string[];
 		iterations: number;
 	} | null;
+	layer2: {
+		ran: boolean;
+		stopReason: string;
+		errorsBefore: number;
+		errorsAfter: number;
+		iterations: number;
+		totalInputTokens: number;
+		totalOutputTokens: number;
+		totalCostUsd: number;
+		budgetExceeded: boolean;
+		model: string;
+	} | null;
 	errorsAfter: number;
 	remainingByCode: Record<string, number>;
 	remainingByFile: Record<string, number>;
@@ -46,6 +60,22 @@ interface StackReport {
 	elapsedMs: number;
 	dryRun: boolean;
 	logs?: string[];
+}
+
+// USD per million tokens. Pricing source:
+// https://www.anthropic.com/pricing (Anthropic Console → API → Pricing).
+// If you change models, add their entry here so cost estimates aren't 0.
+// Unknown models log a warning and report cost as 0.
+const ANTHROPIC_PRICING: Record<string, { input: number; output: number }> = {
+	"claude-haiku-4-5": { input: 0.8, output: 4.0 },
+	"claude-sonnet-4-5": { input: 3.0, output: 15.0 },
+	"claude-opus-4-7": { input: 15.0, output: 75.0 },
+};
+
+function estimateCostUsd(model: string, inputTokens: number, outputTokens: number): number {
+	const p = ANTHROPIC_PRICING[model];
+	if (!p) return 0;
+	return (inputTokens * p.input + outputTokens * p.output) / 1e6;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -56,6 +86,10 @@ function parseArgs(argv: string[]): CliArgs {
 		dryRun: false,
 		files: undefined,
 		verbose: false,
+		llm: false,
+		llmModel: "claude-haiku-4-5",
+		llmMaxIterations: 3,
+		llmBudgetUsd: undefined,
 	};
 	for (let i = 0; i < argv.length; i++) {
 		const a = argv[i];
@@ -71,6 +105,24 @@ function parseArgs(argv: string[]): CliArgs {
 			args.files = (argv[++i] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
 		} else if (a === "--verbose" || a === "-v") {
 			args.verbose = true;
+		} else if (a === "--llm") {
+			args.llm = true;
+		} else if (a === "--llm-model") {
+			args.llmModel = argv[++i] ?? args.llmModel;
+		} else if (a === "--llm-max-iterations") {
+			const n = parseInt(argv[++i] ?? "", 10);
+			if (Number.isNaN(n) || n < 1) {
+				console.error(`error: --llm-max-iterations expects a positive integer, got '${argv[i]}'`);
+				process.exit(2);
+			}
+			args.llmMaxIterations = n;
+		} else if (a === "--llm-budget-usd") {
+			const v = parseFloat(argv[++i] ?? "");
+			if (Number.isNaN(v) || v < 0) {
+				console.error(`error: --llm-budget-usd expects a positive number, got '${argv[i]}'`);
+				process.exit(2);
+			}
+			args.llmBudgetUsd = v;
 		} else if (a === "--help" || a === "-h") {
 			printHelp();
 			process.exit(0);
@@ -86,22 +138,33 @@ function parseArgs(argv: string[]): CliArgs {
 
 function printHelp(): void {
 	console.error(`
-Usage: run-stack --workspace <path> [options]
+Usage: tsfix --workspace <path> [options]
 
-Options:
-  --workspace, -w <path>   Workspace root (required)
-  --files <list>           Comma-separated file paths to scope tsc/lsp to (default: all .ts/.tsx)
-  --no-lsp                 Skip Layer 0 LSP auto-fixer
-  --dry-run                Run the LSP fixer in memory; do NOT write changes
-                           to disk. Lists files that would be edited.
-  --json                   Emit JSON report on stdout
-  --verbose, -v            Stream layer logs to stderr
-  --help, -h               Show this help
+Layer 0/1 (default — deterministic, no network):
+  --workspace, -w <path>      Workspace root (required)
+  --files <a.ts,b.ts>         Scope tsc/lsp to this comma-separated list
+  --no-lsp                    Skip Layer 0 LSP auto-fixer (validate only)
+  --dry-run                   Run fixer in memory; list edits but don't write
+  --json                      Emit JSON report on stdout
+  --verbose, -v               Stream layer logs to stderr
+  --help, -h                  Show this help
+
+Layer 2 (opt-in — single-file LLM mend via Anthropic):
+  --llm                       Enable Layer 2 on errors that survive Layer 0/1
+  --llm-model <name>          Anthropic model (default: claude-haiku-4-5)
+                              Known-priced models: claude-haiku-4-5,
+                              claude-sonnet-4-5, claude-opus-4-7.
+                              Cost estimate is 0 for unknown models.
+  --llm-max-iterations <N>    Cap on LLM retries (default: 3)
+  --llm-budget-usd <amount>   Soft cost cap. Exits with code 3 if exceeded.
+
+Layer 2 requires ANTHROPIC_API_KEY in the environment.
 
 Exit codes:
   0  no errors after stack
   1  errors remain after stack
   2  bad arguments / harness error
+  3  Layer 2 budget exceeded (errors may still remain; partial work persisted)
 `.trim());
 }
 
@@ -135,6 +198,13 @@ function printHumanReport(r: StackReport): void {
 		}
 	} else {
 		w.write(`  LSP fixer:     skipped\n`);
+	}
+	if (r.layer2) {
+		const l2 = r.layer2;
+		w.write(
+			`  Layer 2 (LLM): ${l2.errorsBefore} → ${l2.errorsAfter} errors  ${l2.iterations}× iter  ${l2.totalInputTokens}→${l2.totalOutputTokens} tokens  $${l2.totalCostUsd.toFixed(4)} ${l2.budgetExceeded ? "⚠️  budget exceeded" : ""}\n`,
+		);
+		w.write(`                 model=${l2.model} · stopReason=${l2.stopReason}\n`);
 	}
 	w.write(`  errors after:  ${r.errorsAfter}\n`);
 	if (r.errorsAfter > 0) {
@@ -185,6 +255,7 @@ async function main(): Promise<number> {
 		lspFixer: args.noLsp
 			? { ran: false, fixesApplied: 0, filesEdited: [], iterations: 0 }
 			: loop.lspFixer,
+		layer2: null,
 		errorsAfter: loop.errorsAfter,
 		remainingByCode: loop.remainingByCode,
 		remainingByFile: loop.remainingByFile,
@@ -193,12 +264,90 @@ async function main(): Promise<number> {
 		dryRun: args.dryRun,
 	};
 
+	let budgetExceeded = false;
+
+	// ── Layer 2 escalation ─────────────────────────────────────────────────
+	if (args.llm && loop.errorsAfter > 0) {
+		if (args.dryRun) {
+			console.error("error: --llm and --dry-run are mutually exclusive (Layer 2 writes patches to disk)");
+			return 2;
+		}
+		const apiKey = process.env.ANTHROPIC_API_KEY;
+		if (!apiKey) {
+			console.error("error: --llm requires ANTHROPIC_API_KEY in the environment");
+			return 2;
+		}
+		if (!ANTHROPIC_PRICING[args.llmModel]) {
+			logger.warn(
+				`unknown model '${args.llmModel}' — cost estimates will be 0; budget cap will not trigger`,
+			);
+		}
+
+		const errorDiags = loop.diagnostics.filter((d) => d.category === "error");
+		const context: MendContext = {
+			workspaceRoot,
+			diagnostics: errorDiags,
+			erroredFiles: Array.from(new Set(errorDiags.map((d: Diagnostic) => d.file))),
+		};
+
+		const layer2Start = Date.now();
+		const mend = await runMendLoop({
+			context,
+			llm: { provider: "anthropic", model: args.llmModel, apiKey },
+			maxIterations: args.llmMaxIterations,
+		});
+		void layer2Start;
+
+		const totalCostUsd = estimateCostUsd(
+			args.llmModel,
+			mend.totalInputTokens,
+			mend.totalOutputTokens,
+		);
+		budgetExceeded =
+			args.llmBudgetUsd !== undefined && totalCostUsd > args.llmBudgetUsd;
+
+		report.layer2 = {
+			ran: true,
+			stopReason: mend.stopReason,
+			errorsBefore: errorDiags.length,
+			errorsAfter: mend.diagnosticsAfter.length,
+			iterations: mend.iterations.length,
+			totalInputTokens: mend.totalInputTokens,
+			totalOutputTokens: mend.totalOutputTokens,
+			totalCostUsd,
+			budgetExceeded,
+			model: args.llmModel,
+		};
+
+		// Re-derive the final report from the post-Layer-2 state. Layer 2
+		// may have written files, so we need a fresh in-process tsc to get
+		// accurate remainingByCode / remainingByFile.
+		const post = runInProcessTsc({
+			workspaceRoot,
+			generatedFiles: targetFiles,
+			logger,
+		});
+		const postErrorDiags = post.diagnostics.filter((d) => d.category === "error");
+		report.errorsAfter = postErrorDiags.length;
+		report.remainingByCode = {};
+		report.remainingByFile = {};
+		for (const d of postErrorDiags) {
+			report.remainingByCode[d.code] = (report.remainingByCode[d.code] ?? 0) + 1;
+			report.remainingByFile[d.file] = (report.remainingByFile[d.file] ?? 0) + 1;
+		}
+		report.passed = report.errorsAfter === 0;
+		report.elapsedMs = loop.elapsedMs + (Date.now() - layer2Start);
+	}
+
 	if (args.json) {
 		process.stdout.write(JSON.stringify(report, null, 2) + "\n");
 	} else {
 		printHumanReport(report);
 	}
 
+	// Exit code precedence: budget exceeded (3) > errors remain (1) > clean (0).
+	// 2 is reserved for bad args / harness errors and is returned earlier.
+	if (budgetExceeded) return 3;
 	return report.passed ? 0 : 1;
 }
 
