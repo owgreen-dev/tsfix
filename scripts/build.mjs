@@ -37,7 +37,17 @@ const sharedOptions = {
 	format: "esm",
 	platform: "node",
 	target: "node20.9",
-	external: ["typescript"],
+	external: [
+		"typescript", // peer dep
+		// AI SDK packages stay external: (1) `@vercel/oidc` (transitive of
+		// `ai`) uses dynamic require() patterns that fail under esbuild's
+		// ESM output at module-init time, breaking plain `node` execution;
+		// (2) keeping them external slims the bundle from ~1.3 MB to ~25 KB;
+		// (3) both are declared in `dependencies` so npm install pulls them
+		// in for consumers who use Layer 2.
+		"ai",
+		"@ai-sdk/anthropic",
+	],
 	logLevel: "info",
 	// `import.meta.url` and Node built-in URL imports stay as-is.
 	banner: { js: "" },

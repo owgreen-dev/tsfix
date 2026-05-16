@@ -42,9 +42,26 @@ All notable changes to `@shipispec/tsfix` are documented here. Format follows [K
 - **Layer-2 fixture filter (LLM benchmark)** — the LLM benchmark now filters fixtures by `expected.json` shape (`costUsdMax` or `expectedErrorCode`), mirroring the Layer-0 benchmark's filter. Prevents accidentally running Layer-0 fixtures through the LLM.
 - **`benchmark/run-llm-benchmark.ts` rewritten** around the parallel + cached worker model. Per-fixture output gets a `[n/m]` progress prefix and prints in completion order; final summary sorted by name for deterministic output. Total wall time, total cost (cache misses only — hits are free), and cache hit rate are reported at the end.
 
+### Added (CLI — Layer 2 exposure)
+- **`--llm` flag** — opt-in escalation to Layer 2 (single-file LLM mend) for errors that survive Layer 0/1. Off by default; CLI default path remains zero-network.
+- **`--llm-model <name>`** — Anthropic model (default `claude-haiku-4-5`). Known-priced models hardcoded for cost estimation: `claude-haiku-4-5`, `claude-sonnet-4-5`, `claude-opus-4-7`. Unknown models warn and report cost as 0.
+- **`--llm-max-iterations <N>`** — cap on LLM retries (default 3).
+- **`--llm-budget-usd <amount>`** — soft cost cap. If exceeded, exits with code 3 (Layer 2 still ran; partial work persisted to disk).
+- **Exit code 3** added — Layer 2 budget exceeded.
+- **Validation:** `--llm` without `ANTHROPIC_API_KEY` → exit 2 with helpful error. `--llm + --dry-run` is rejected as mutually exclusive (Layer 2 writes patches to disk).
+- **JSON report extension** — `layer2: { ran, stopReason, errorsBefore, errorsAfter, iterations, totalInputTokens, totalOutputTokens, totalCostUsd, budgetExceeded, model } | null`. Layer 0/1 surface unchanged.
+- **Human report extension** — new "Layer 2 (LLM)" line in the per-run summary when `--llm` was used. Shows error count delta, iteration count, tokens, cost, and stopReason.
+- **13 new CLI integration tests** in `cli/run-stack.test.ts` covering argument validation, exit codes, no-key errors, mutual-exclusion checks, JSON report shape, and the no-Layer-2-when-Layer-0-clean path. Tests spawn the actual `tsx cli/run-stack.ts` process — catches integration issues that pure unit tests of `parseArgs` would miss.
+
+### Fixed (latent v0.4.0 bundle bug)
+- **Externalized `ai` and `@ai-sdk/anthropic`** from the esbuild bundle in `scripts/build.mjs`. v0.4.0 inlined them, which (1) bloated `dist/index.js` from ~25 KB to 1.3 MB, and (2) crashed under plain `node` execution at module-init time because `@vercel/oidc` (transitive) uses dynamic `require()` patterns that fail in ESM bundles. Both packages are declared in `dependencies` so npm install pulls them in automatically for consumers using Layer 2. **Bundle sizes after fix:** `dist/index.js` 1.3 MB → 36 KB; `dist/cli.js` ~22 KB → 45 KB. Library import via plain `node` now works (verified with `node -e 'import("./dist/index.js")'`).
+
 ### Deferred (fixture engine)
 - **TS2532** (Object is possibly undefined) — seeds don't currently contain optional chains or `Map.get()`-style calls that would produce TS2532 deterministically. Mutator deferred until seeds expand or a real-failure capture provides better candidates.
 - **TS2551-negative** (LSP returns multiple equally-close fix candidates → abstains) — engineering a deterministic TS2551 case where Layer 0's `fixesAreEquivalent` check abstains is contrived. Defer until we see a real-world example.
+
+### Also changed (CLI)
+- **CLI public surface** at `cli/run-stack.ts` extended with the Layer 2 flags listed above. The bin entry (`dist/cli.js`) now imports `runMendLoop`, `runInProcessTsc` and the contract types from `src/index.ts` in addition to the previous `runValidationLoop` + `discoverTsFiles`. Tree-shaking keeps Layer 2 out of the bundle's code path unless `--llm` is set.
 
 ## [0.4.0] - 2026-05-14
 
