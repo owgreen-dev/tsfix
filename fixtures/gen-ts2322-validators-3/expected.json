@@ -1,0 +1,15 @@
+{
+  "description": "Replaced return value 'max' with \"x_3\" in a function declared to return number. Should report TS2322.",
+  "expectedErrorCode": "TS2322",
+  "errorsBefore": 1,
+  "errorsAfterMax": 0,
+  "maxIterations": 3,
+  "mustPass": true,
+  "costUsdMax": 0.005,
+  "_generated": {
+    "seed": "validators.ts",
+    "mutator": "ts2322-incompatible-return",
+    "index": 3,
+    "timestamp": "2026-05-15T19:39:40.419Z"
+  }
+}

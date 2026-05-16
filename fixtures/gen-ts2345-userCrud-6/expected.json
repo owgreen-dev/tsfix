@@ -1,0 +1,15 @@
+{
+  "description": "Replaced argument '\"@admin.example\"' with 42 (parameter expects string). Should report TS2345.",
+  "expectedErrorCode": "TS2345",
+  "errorsBefore": 1,
+  "errorsAfterMax": 0,
+  "maxIterations": 3,
+  "mustPass": true,
+  "costUsdMax": 0.005,
+  "_generated": {
+    "seed": "userCrud.ts",
+    "mutator": "ts2345-arg-type-mismatch",
+    "index": 6,
+    "timestamp": "2026-05-15T19:39:49.319Z"
+  }
+}

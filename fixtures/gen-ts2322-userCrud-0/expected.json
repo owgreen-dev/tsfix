@@ -1,0 +1,15 @@
+{
+  "description": "Replaced return value 'u.name' with 42 in a function declared to return string. Should report TS2322.",
+  "expectedErrorCode": "TS2322",
+  "errorsBefore": 1,
+  "errorsAfterMax": 0,
+  "maxIterations": 3,
+  "mustPass": true,
+  "costUsdMax": 0.005,
+  "_generated": {
+    "seed": "userCrud.ts",
+    "mutator": "ts2322-incompatible-return",
+    "index": 0,
+    "timestamp": "2026-05-15T19:39:39.015Z"
+  }
+}

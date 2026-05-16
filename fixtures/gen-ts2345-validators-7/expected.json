@@ -1,0 +1,15 @@
+{
+  "description": "Replaced argument 'input.age' with \"x_7\" (parameter expects number). Should report TS2345.",
+  "expectedErrorCode": "TS2345",
+  "errorsBefore": 1,
+  "errorsAfterMax": 0,
+  "maxIterations": 3,
+  "mustPass": true,
+  "costUsdMax": 0.005,
+  "_generated": {
+    "seed": "validators.ts",
+    "mutator": "ts2345-arg-type-mismatch",
+    "index": 7,
+    "timestamp": "2026-05-15T19:39:49.699Z"
+  }
+}

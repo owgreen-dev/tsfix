@@ -1,0 +1,15 @@
+{
+  "description": "Dropped trailing argument 'input.age' from call. Function expects 1, call now passes 0. Should report TS2554.",
+  "expectedErrorCode": "TS2554",
+  "errorsBefore": 1,
+  "errorsAfterMax": 0,
+  "maxIterations": 3,
+  "mustPass": true,
+  "costUsdMax": 0.005,
+  "_generated": {
+    "seed": "validators.ts",
+    "mutator": "ts2554-arg-count-mismatch",
+    "index": 1,
+    "timestamp": "2026-05-15T19:39:51.360Z"
+  }
+}

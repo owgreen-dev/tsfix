@@ -28,16 +28,24 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { Project } from "ts-morph";
-// Imports tsfix's own dist/ — run `npm run build` first.
+// Imports tsfix's own src/ via tsx. The dist/ bundle inlines the AI SDK
+// (which uses dynamic require() patterns that break under esbuild's ESM
+// output at module-init time), so we go around it. The generator only
+// uses Layer 0/1 entry points anyway — never an LLM call.
 import {
 	runInProcessTsc,
 	runValidationLoop,
 	resetInProcessTscCache,
 	resetLSPFixerCache,
-} from "../dist/index.js";
+} from "../src/index.ts";
 import { mutate as mutateTS2339 } from "./lib/mutators/ts2339-property-not-exist.mjs";
 import { mutate as mutateTS7006 } from "./lib/mutators/ts7006-implicit-any.mjs";
 import { mutate as mutateTS2741 } from "./lib/mutators/ts2741-missing-property.mjs";
+import { mutate as mutateTS2322 } from "./lib/mutators/ts2322-incompatible-return.mjs";
+import { mutate as mutateTS2304 } from "./lib/mutators/ts2304-cannot-find-name.mjs";
+import { mutate as mutateTS2345 } from "./lib/mutators/ts2345-arg-type-mismatch.mjs";
+import { mutate as mutateTS2554 } from "./lib/mutators/ts2554-arg-count-mismatch.mjs";
+import { mutate as mutateTS2365 } from "./lib/mutators/ts2365-operator-mismatch.mjs";
 
 const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -55,6 +63,11 @@ const MUTATORS = {
 	TS2339: { mutate: mutateTS2339, name: "ts2339-property-not-exist" },
 	TS7006: { mutate: mutateTS7006, name: "ts7006-implicit-any" },
 	TS2741: { mutate: mutateTS2741, name: "ts2741-missing-property" },
+	TS2322: { mutate: mutateTS2322, name: "ts2322-incompatible-return" },
+	TS2304: { mutate: mutateTS2304, name: "ts2304-cannot-find-name" },
+	TS2345: { mutate: mutateTS2345, name: "ts2345-arg-type-mismatch" },
+	TS2554: { mutate: mutateTS2554, name: "ts2554-arg-count-mismatch" },
+	TS2365: { mutate: mutateTS2365, name: "ts2365-operator-mismatch" },
 };
 
 function mulberry32(seed) {
