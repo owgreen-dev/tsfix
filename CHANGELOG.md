@@ -13,15 +13,30 @@ All notable changes to `@shipispec/tsfix` are documented here. Format follows [K
 - **Indent + CRLF preservation** — comment matches the indentation of the line it's stubbing; CRLF line endings on Windows-authored files survive the rewrite.
 - **`dryRun`** support — same semantics as Layer 2: reports `stubsApplied` without writing.
 
+### Added (fixture engine — Day 2/3 mutators)
+- **5 new ts-morph mutators** covering codes the original 3-mutator set didn't reach:
+  - `ts2322-incompatible-return.mjs` — replaces a return expression with a wrong-typed primitive literal in a function with a primitive return type
+  - `ts2304-cannot-find-name.mjs` — renames a value-position identifier (variable, call, parameter usage) to a no-near-match string; Layer 0's auto-import abstains because there's no candidate
+  - `ts2345-arg-type-mismatch.mjs` — replaces a function-call argument with a wrong-typed primitive when the parameter's declared type is `string` / `number` / `boolean`
+  - `ts2554-arg-count-mismatch.mjs` — drops the trailing argument from a call that currently satisfies its signature
+  - `ts2365-operator-mismatch.mjs` — replaces one operand of a numeric binary expression (`<`, `>`, `<=`, `>=`, `-`, `*`, `/`, `%`) with a string literal
+- **50 new generated fixtures** (10 per new code × 8 codes total). Total Layer-2 fixture corpus: **85** (was 35) — 3 minimal + 2 realistic + 80 generated across 8 codes. Total fixture count across all layers: **99** (14 Layer-0 + 85 Layer-2).
+
 ### Added (tests)
-- **19 new unit tests** — 16 in `stubAndContinue.test.ts` (single error, multi-error-same-line, multi-code, indent preservation, descending-order processing, idempotency, node_modules skip, .d.ts skip, missing-file skip, dry-run, message truncation, CRLF preservation, first-line edge case, no-eligible case, warning/suggestion filtering, multi-file) + 3 in `runMendLoop.test.ts` (stubOnFailure true → stopReason flips to "stubbed" and tsc exits clean, stubOnFailure default false → errors stay, stubOnFailure + dryRun → no disk writes).
+- **19 new Layer-4 unit tests** — 16 in `stubAndContinue.test.ts` + 3 in `runMendLoop.test.ts` covering single error, multi-error-same-line, multi-code, indent preservation, descending-order processing, idempotency, node_modules skip, .d.ts skip, missing-file skip, dry-run, message truncation, CRLF preservation, first-line edge case, no-eligible case, warning/suggestion filtering, and the runMendLoop integration (stopReason flip, default-off behavior, dryRun interaction).
 
 ### Changed
 - **Public surface** at `src/index.ts` extended with `stubAndContinue`, `StubAndContinueOptions`, `StubAndContinueResult`, `AppliedStub`, `SkippedStub`. Layer 0/1/2 surface unchanged.
 - **`RunMendLoopOptions`** gains `stubOnFailure?: boolean`. **`RunMendLoopResult`** gains optional `stubs?: AppliedStub[]`. **`StopReason`** union gains `"stubbed"`. All additive — old callers unaffected.
+- **`scripts/generate-fixtures.mjs`** now runs via `tsx` and imports from `src/index.ts` directly instead of `dist/index.js`. Reason: the v0.4.0 dist bundle inlines `@vercel/oidc` (transitive of `ai`), which uses dynamic `require()` patterns that fail under esbuild's ESM output at module-init time. The generator only needs Layer 0/1 entry points, so importing from source bypasses the AI SDK entirely. Side benefit: no `npm run build` prerequisite — `npm run generate-fixtures` works from a fresh clone.
+- Removed `pregenerate-fixtures: npm run build` hook from `package.json`.
 
 ### Fixed
 - **`stubAndContinue` resolves relative paths** against `workspaceRoot`. Diagnostics from `runInProcessTsc` use relative paths; consumers may pass absolute. Both work.
+
+### Deferred (fixture engine)
+- **TS2532** (Object is possibly undefined) — seeds don't currently contain optional chains or `Map.get()`-style calls that would produce TS2532 deterministically. Mutator deferred until seeds expand or a real-failure capture provides better candidates.
+- **TS2551-negative** (LSP returns multiple equally-close fix candidates → abstains) — engineering a deterministic TS2551 case where Layer 0's `fixesAreEquivalent` check abstains is contrived. Defer until we see a real-world example.
 
 ## [0.4.0] - 2026-05-14
 
