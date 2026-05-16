@@ -4,6 +4,15 @@ All notable changes to `@shipispec/tsfix` are documented here. Format follows [K
 
 ## [Unreleased]
 
+### Added (Tier 3 — telemetry + unified entrypoint)
+- **`onLayerEvent?: (event: LayerEvent) => void`** callback option on `ValidationLoopOptions`, `RunMendLoopOptions`, and (new) `RunFullStackOptions`. Wires the `LayerEvent` type that's been published since v0.3.0 but never had a callback. Optional — undefined callback costs nothing.
+  - **Layer 1** emits one event per fixable-error attempt: `{layer: 1, errorCode, fixed, latencyMs, ts}`. `fixed: true` when a safe LSP fix landed; `fixed: false` when the fixer abstained (no candidate, ambiguous candidates, or zero-fix response).
+  - **Layer 2** emits one event per `runMendLoop` iteration: `{layer: 2, errorCode: <dominant code in iteration input>, fixed: <iteration cleared all errors>, latencyMs, ts}`. `costUsd` intentionally omitted from the per-event payload — callers can compute it from `result.layer2.totalInputTokens` + `totalOutputTokens` plus their own pricing.
+  - **Layer 4** emits one event per stub applied: `{layer: 4, errorCode: <parsed from "TSNNNN">, fixed: true, latencyMs: 0, ts}`. Multi-error coalesced stubs emit one event per `(stub × errorCode)` pair.
+- **`runFullStack(opts)`** — new top-level entrypoint that composes Layer 0/1 → Layer 2 (opt-in via `llm`) → Layer 4 (opt-in via `stubOnFailure`) and returns a unified `RunFullStackResult`. Callers who want "run the whole stack" no longer need to compose `runValidationLoop` + `runMendLoop` + (post-`runInProcessTsc` re-check) by hand. Library equivalent of the CLI's existing all-layers flow.
+- **`RunFullStackResult`** flat shape: `passed`, `errorsBefore`, `errorsAfterLayer1`, `errorsAfterAllLayers`, `layer1` (LSPFixer sub-result), `layer2` (RunMendLoopResult | null), `layer4` (`{stubsApplied: AppliedStub[]} | null`), `totalCostUsd`, `totalLatencyMs`, `remainingByCode`, `remainingByFile`. Matches the v0.3.0 roadmap sketch for the "unified result" type with cost + telemetry rolled in.
+- **10 new unit tests** in `src/runFullStack.test.ts` covering: clean workspace, Layer-1-only fix, unfixable-no-LLM, mocked-Layer-2 + cost math, unknown-model fallback, Layer-4 stubOnFailure path, per-error Layer-1 events, per-iteration Layer-2 events, per-stub Layer-4 events, undefined-callback smoke.
+
 ### Added (multi-provider — Tier 2)
 - **OpenAI and Google providers** for Layer 2. `runMendLoop` and `mendSingleFile` now accept `llm.provider: "anthropic" | "openai" | "google"` (was: `"anthropic"` only). Each provider uses its corresponding `@ai-sdk/X` package via a small `buildLanguageModel` factory in `mendAgent.ts`. The factory's `switch` is exhaustive — TypeScript flags missing cases if a new provider is added to the `LLMProvider` union.
 - **`LLMProvider` type** exported from `src/index.ts`. Re-exportable for callers building their own CLI / pipeline integrations.
@@ -22,6 +31,8 @@ All notable changes to `@shipispec/tsfix` are documented here. Format follows [K
 - **5 new CLI tests** in `cli/run-stack.test.ts` covering `--help` listing all three providers + env-var names, invalid `--llm-provider` rejection, per-provider env-var routing, and the default-provider-is-anthropic back-compat case.
 
 ### Changed
+- **`tsLanguageServiceFixer.ts`** internal loop now emits a `LayerEvent` per fixable error attempt when `onLayerEvent` is provided to `LSPFixerOptions`. Loop control unchanged; if the callback is undefined the only cost is one optional-chaining check per fix.
+- **`runMendLoop.ts`** emits per-iteration Layer-2 events and per-stub Layer-4 events when `onLayerEvent` is provided. New internal helpers `parseTsCode("TS2304") → 2304` and `dominantErrorCode(diags) → 2304` for event payload assembly.
 - **`LLMCall` type** input gains optional `provider?: LLMProvider`. Optional so v0.5.0 callers' `LLMCall` injections still type-check (their callbacks just ignore the new field).
 - **Cache key** at `benchmark/cache.ts` now includes provider: `sha256(systemBlock + " " + userBlock + " " + provider + " " + model)`. Provider defaults to `"anthropic"` when not passed → v0.5.0 cache entries remain valid for unchanged anthropic prompts.
 - **`scripts/build.mjs`** externalizes `@ai-sdk/openai` and `@ai-sdk/google` (in addition to `@ai-sdk/anthropic` and `ai`). Consumers who never invoke Layer 2 still don't load any AI SDK; consumers who do get whichever provider package they hit.
