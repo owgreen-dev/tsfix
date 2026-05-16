@@ -1,6 +1,6 @@
 {
 	"name": "@shipispec/tsfix",
-	"version": "0.4.0",
+	"version": "0.5.0",
 	"description": "TypeScript error-recovery for LLM-generated code. Layer 0/1 deterministic auto-fix via the TS Language Service + Layer 2 LLM mend (Vercel AI SDK + Anthropic) in one package.",
 	"keywords": [
 		"typescript",
