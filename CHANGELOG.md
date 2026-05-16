@@ -34,6 +34,14 @@ All notable changes to `@shipispec/tsfix` are documented here. Format follows [K
 ### Fixed
 - **`stubAndContinue` resolves relative paths** against `workspaceRoot`. Diagnostics from `runInProcessTsc` use relative paths; consumers may pass absolute. Both work.
 
+### Added (Layer-2 benchmark — Day 4)
+- **Parallelism** — `npm run benchmark:llm` now runs fixtures concurrently via an inline `pLimit(N)` semaphore (no new dep). Default concurrency is 8; configurable via `--concurrency=N`. 100 fixtures at ~1.5s/each: sequential ~2 min → parallel ~20s. Per-fixture workspaces are isolated (snapshot/restore is local) so parallelism is safe; tsfix's program cache thrashes harmlessly between fixtures.
+- **File-based response cache** — every LLM call is keyed by `sha256(systemBlock + userBlock + model)` and stored under `.benchmark-cache/<hash>.json`. Re-runs against unchanged fixtures replay cached responses for free. Any change to the system prompt template, fixture content, or model invalidates automatically (it's all in the hash). `--no-cache` bypasses; `--clear-cache` wipes and exits. `.benchmark-cache/` added to `.gitignore`.
+- **Cache module** — extracted to `benchmark/cache.ts` so the logic is unit-testable independent of the full benchmark. 16 new unit tests covering: deterministic keying, key sensitivity per input, hex format, separator-confusion resistance, round-trip read/write, corrupted-entry handling, miss → store → hit cycle, parameter discrimination, bypass behavior, apiKey NOT in the cache key (rotating keys doesn't invalidate), error propagation without poisoning the cache.
+- **Failure reporting** — when fixtures fail, the per-iteration LLM raw response dump is collected and printed in a single block at the end of the run (instead of inline during the loop, which would interleave under concurrency).
+- **Layer-2 fixture filter (LLM benchmark)** — the LLM benchmark now filters fixtures by `expected.json` shape (`costUsdMax` or `expectedErrorCode`), mirroring the Layer-0 benchmark's filter. Prevents accidentally running Layer-0 fixtures through the LLM.
+- **`benchmark/run-llm-benchmark.ts` rewritten** around the parallel + cached worker model. Per-fixture output gets a `[n/m]` progress prefix and prints in completion order; final summary sorted by name for deterministic output. Total wall time, total cost (cache misses only — hits are free), and cache hit rate are reported at the end.
+
 ### Deferred (fixture engine)
 - **TS2532** (Object is possibly undefined) — seeds don't currently contain optional chains or `Map.get()`-style calls that would produce TS2532 deterministically. Mutator deferred until seeds expand or a real-failure capture provides better candidates.
 - **TS2551-negative** (LSP returns multiple equally-close fix candidates → abstains) — engineering a deterministic TS2551 case where Layer 0's `fixesAreEquivalent` check abstains is contrived. Defer until we see a real-world example.

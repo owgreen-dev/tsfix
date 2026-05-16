@@ -1,5 +1,6 @@
 node_modules/
 dist/
 fixtures/_shared/node_modules/
+.benchmark-cache/
 .DS_Store
 *.log
