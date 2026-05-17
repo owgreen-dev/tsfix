@@ -25,13 +25,13 @@
 
 import type { Diagnostic, MendContext } from "./index.js";
 import { resetInProcessTscCache, runInProcessTsc } from "./validatorInProcess.js";
-import { mendSingleFile, type LLMCall, type MendSingleFileResult } from "./mendAgent.js";
+import { mendSingleFile, type LLMCall, type LLMProvider, type MendSingleFileResult } from "./mendAgent.js";
 import { stubAndContinue, type AppliedStub } from "./stubAndContinue.js";
 
 export interface RunMendLoopOptions {
 	context: MendContext;
 	llm: {
-		provider: "anthropic";
+		provider: LLMProvider;
 		model: string;
 		apiKey: string;
 	};

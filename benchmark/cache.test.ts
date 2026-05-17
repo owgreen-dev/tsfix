@@ -72,6 +72,23 @@ describe("cacheKey", () => {
 		const b = cacheKey("ab", "c", "d");
 		expect(a).not.toBe(b);
 	});
+
+	it("produces different hashes for the same model across different providers (v0.6.0+)", () => {
+		// Multi-provider safety: if Anthropic and OpenAI ever share a model
+		// name (rare but possible), the cache must not collide.
+		const a = cacheKey("sys", "usr", "shared-model-name", "anthropic");
+		const b = cacheKey("sys", "usr", "shared-model-name", "openai");
+		const c = cacheKey("sys", "usr", "shared-model-name", "google");
+		expect(a).not.toBe(b);
+		expect(b).not.toBe(c);
+		expect(a).not.toBe(c);
+	});
+
+	it("defaults provider to 'anthropic' when omitted (back-compat with v0.5.0 cache entries)", () => {
+		const withDefault = cacheKey("sys", "usr", "claude-haiku-4-5");
+		const withExplicit = cacheKey("sys", "usr", "claude-haiku-4-5", "anthropic");
+		expect(withDefault).toBe(withExplicit);
+	});
 });
 
 describe("readCacheEntry / writeCacheEntry", () => {

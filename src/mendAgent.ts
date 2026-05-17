@@ -17,8 +17,10 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { generateText } from "ai";
+import { generateText, type LanguageModel } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
+import { createOpenAI } from "@ai-sdk/openai";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import type { MendContext } from "./index.js";
 import { getTypeContext } from "./typeContext.js";
 import {
@@ -28,10 +30,18 @@ import {
 	type EditBlock,
 } from "./applyEditBlock.js";
 
+/**
+ * Provider identifier. Each corresponds to one `@ai-sdk/<provider>` adapter
+ * in the Vercel AI SDK. Adding a provider requires (1) the corresponding
+ * `@ai-sdk/X` dep in package.json, (2) a case in `buildLanguageModel`, and
+ * (3) the appropriate API-key env-var name documented in the CLI.
+ */
+export type LLMProvider = "anthropic" | "openai" | "google";
+
 export interface MendSingleFileOptions {
 	context: MendContext;
 	llm: {
-		provider: "anthropic";
+		provider: LLMProvider;
 		model: string;
 		apiKey: string;
 	};
@@ -53,6 +63,12 @@ export interface MendSingleFileResult {
 export type LLMCall = (params: {
 	systemBlock: string;
 	userBlock: string;
+	/**
+	 * Provider name. Optional for backward compatibility — when omitted,
+	 * the default impl treats it as "anthropic" (matches v0.5.0 behavior).
+	 * Test injection points can ignore this field.
+	 */
+	provider?: LLMProvider;
 	model: string;
 	apiKey: string;
 }) => Promise<{ text: string; inputTokens: number; outputTokens: number }>;
@@ -155,14 +171,41 @@ export function buildUserBlock(context: MendContext, erroredFile: string): strin
 	return `tsc reports:\n${lines.join("\n")}\n\nEmit SEARCH/REPLACE blocks to resolve.`;
 }
 
-const defaultLLMCall: LLMCall = async ({ systemBlock, userBlock, model, apiKey }) => {
-	const anthropic = createAnthropic({ apiKey });
+/**
+ * Build a Vercel-AI-SDK `LanguageModel` for the requested provider. Each
+ * `@ai-sdk/X` package exports a `createX({ apiKey })` factory that returns
+ * a callable; calling it with the model name yields a `LanguageModel`
+ * compatible with `generateText`.
+ *
+ * Why factories per call (not module-level singletons): apiKey can vary
+ * per call (different callers, different keys); factories are cheap;
+ * `generateText` is the hot path and dominates wall time.
+ */
+function buildLanguageModel(provider: LLMProvider, model: string, apiKey: string): LanguageModel {
+	switch (provider) {
+		case "anthropic":
+			return createAnthropic({ apiKey })(model);
+		case "openai":
+			return createOpenAI({ apiKey })(model);
+		case "google":
+			return createGoogleGenerativeAI({ apiKey })(model);
+		default: {
+			// Exhaustiveness check — TypeScript errors here if a new provider
+			// is added to the union without a corresponding case.
+			const _exhaustive: never = provider;
+			throw new Error(`unknown provider: ${_exhaustive}`);
+		}
+	}
+}
+
+const defaultLLMCall: LLMCall = async ({ systemBlock, userBlock, provider = "anthropic", model, apiKey }) => {
+	const llmModel = buildLanguageModel(provider, model, apiKey);
 	// Use top-level `system:` parameter (Vercel AI SDK v6 pattern) rather than
 	// putting a system role inside `messages` — the latter triggers the
 	// "system messages in messages field" security warning and can be dropped
 	// or rerouted on some providers.
 	const result = await generateText({
-		model: anthropic(model),
+		model: llmModel,
 		system: systemBlock,
 		messages: [{ role: "user", content: userBlock }],
 	});
@@ -189,6 +232,7 @@ export async function mendSingleFile(
 	const llmResult = await _callLLM({
 		systemBlock,
 		userBlock,
+		provider: llm.provider,
 		model: llm.model,
 		apiKey: llm.apiKey,
 	});
