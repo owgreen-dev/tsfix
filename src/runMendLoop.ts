@@ -23,7 +23,7 @@
  * needs the actual file changes.
  */
 
-import type { Diagnostic, MendContext } from "./index.js";
+import type { Diagnostic, LayerEvent, MendContext } from "./index.js";
 import { resetInProcessTscCache, runInProcessTsc } from "./validatorInProcess.js";
 import { mendSingleFile, type LLMCall, type LLMProvider, type MendSingleFileResult } from "./mendAgent.js";
 import { stubAndContinue, type AppliedStub } from "./stubAndContinue.js";
@@ -46,6 +46,13 @@ export interface RunMendLoopOptions {
 	 * Default false. Ignored when `dryRun: true`.
 	 */
 	stubOnFailure?: boolean;
+	/**
+	 * Per-iteration / per-stub telemetry callback. Layer 2 emits one event per
+	 * iteration with the dominant error code (`fixed: true` if the iteration
+	 * cleared all errors); Layer 4 emits one event per stubbed `(line, code)`
+	 * pair. Both forwarded to the same callback. Optional.
+	 */
+	onLayerEvent?: (event: LayerEvent) => void;
 	/** @internal — LLM call override for tests. */
 	_callLLM?: LLMCall;
 }
@@ -119,8 +126,41 @@ function refreshDiagnostics(workspaceRoot: string, files: string[]): Diagnostic[
 	return result.diagnostics.filter((d: Diagnostic) => d.category === "error");
 }
 
+/**
+ * "TS2304" → 2304. Returns 0 if the code doesn't match the expected shape
+ * (defensive — we'd rather emit a bogus event than crash the loop).
+ */
+function parseTsCode(code: string): number {
+	const m = /^TS(\d+)$/.exec(code);
+	return m ? parseInt(m[1], 10) : 0;
+}
+
+/**
+ * Pick the most-frequent error code in a diagnostic set. Used as the
+ * representative code for a per-iteration `LayerEvent`. If multiple codes
+ * tie, returns the first one encountered.
+ */
+function dominantErrorCode(diags: Diagnostic[]): number {
+	const counts = new Map<string, number>();
+	for (const d of diags) {
+		counts.set(d.code, (counts.get(d.code) ?? 0) + 1);
+	}
+	let bestCode = "";
+	let bestCount = 0;
+	for (const [code, count] of counts) {
+		if (count > bestCount) {
+			bestCount = count;
+			bestCode = code;
+		}
+	}
+	return parseTsCode(bestCode);
+}
+
 export async function runMendLoop(opts: RunMendLoopOptions): Promise<RunMendLoopResult> {
-	const { context, llm, maxIterations = 3, dryRun = false, stubOnFailure = false, _callLLM } = opts;
+	const {
+		context, llm, maxIterations = 3, dryRun = false,
+		stubOnFailure = false, onLayerEvent, _callLLM,
+	} = opts;
 	const startMs = Date.now();
 
 	const diagnosticsBefore = context.diagnostics.filter((d) => d.category === "error");
@@ -182,6 +222,21 @@ export async function runMendLoop(opts: RunMendLoopOptions): Promise<RunMendLoop
 			rawResponse: mend.rawResponse,
 		});
 
+		// One LayerEvent per iteration. `errorCode` is the most-frequent code
+		// in the iteration's input; `fixed: true` when the iteration cleared
+		// every diagnostic in scope (callers wanting per-error granularity
+		// should sum + diff iterations themselves).
+		// costUsd is intentionally omitted — caller knows the model + can
+		// compute cost from `iterations[].inputTokens` + outputTokens. We
+		// don't want to bake pricing into runMendLoop.
+		onLayerEvent?.({
+			layer: 2,
+			errorCode: dominantErrorCode(currentDiags),
+			fixed: newDiags.length === 0,
+			latencyMs: mend.latencyMs,
+			ts: Date.now(),
+		});
+
 		if (dryRun) {
 			currentDiags = newDiags;
 			stopReason = "maxIterations";
@@ -217,6 +272,22 @@ export async function runMendLoop(opts: RunMendLoopOptions): Promise<RunMendLoop
 			diagnostics: currentDiags,
 		});
 		stubs = stubResult.stubsApplied;
+		// Emit one LayerEvent per (stub × errorCode). A stub silences any
+		// errors on its line; coalesced multi-error lines emit N events.
+		if (onLayerEvent) {
+			const stubTs = Date.now();
+			for (const stub of stubResult.stubsApplied) {
+				for (const code of stub.codes) {
+					onLayerEvent({
+						layer: 4,
+						errorCode: parseTsCode(code),
+						fixed: true,
+						latencyMs: 0,
+						ts: stubTs,
+					});
+				}
+			}
+		}
 		// Re-validate so diagnosticsAfter reflects the post-stub state.
 		const postStubDiags = refreshDiagnostics(context.workspaceRoot, filesInScope);
 		if (postStubDiags.length === 0) {

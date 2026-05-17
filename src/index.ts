@@ -94,6 +94,12 @@ export interface ValidationLoopOptions {
 	dryRun?: boolean;
 	/** Default: a no-op logger. Pass your own to capture layer events. */
 	logger?: Logger;
+	/**
+	 * Per-error telemetry callback for Layer 1 (LSP fixer). Fires once per
+	 * fixable error with `{layer: 1, errorCode, fixed, latencyMs, ts}`. Optional;
+	 * undefined callback costs nothing. See `LayerEvent`.
+	 */
+	onLayerEvent?: (event: LayerEvent) => void;
 }
 
 export interface ValidationLoopResult {
@@ -186,7 +192,10 @@ export function runValidationLoop(opts: ValidationLoopOptions): ValidationLoopRe
 	};
 
 	if (errorsBefore > 0 && !skipLSPFixer) {
-		const lsp = runLSPFixerPass({ workspaceRoot, targetFiles, logger, dryRun });
+		const lsp = runLSPFixerPass({
+			workspaceRoot, targetFiles, logger, dryRun,
+			onLayerEvent: opts.onLayerEvent,
+		});
 		lspFixer = {
 			ran: true,
 			fixesApplied: lsp.fixesApplied,
@@ -345,3 +354,195 @@ export type {
 	AppliedStub,
 	SkippedStub,
 } from "./stubAndContinue.js";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Unified full-stack entrypoint (v0.6.0+).
+//
+// Convenience wrapper that runs Layer 0/1 → Layer 2 (opt-in) → Layer 4
+// (opt-in) and returns one combined result. Callers who want just one layer
+// keep using the per-layer functions; callers who want "run the whole stack"
+// reach for this instead of composing it themselves.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { runMendLoop, type RunMendLoopResult } from "./runMendLoop.js";
+import type { AppliedStub } from "./stubAndContinue.js";
+import type { LLMProvider } from "./mendAgent.js";
+
+export interface RunFullStackOptions {
+	/** Absolute path to the workspace (must contain `tsconfig.json`). */
+	workspaceRoot: string;
+	/** Files to scope to. If omitted, all `.ts`/`.tsx` files under workspaceRoot. */
+	targetFiles?: string[];
+	/** Skip Layer 0/1 LSP auto-fixer. Default false. */
+	skipLSPFixer?: boolean;
+	/**
+	 * Layer 2 config. If omitted, the loop stops after Layer 0/1 (matches
+	 * `runValidationLoop` behavior — no LLM calls).
+	 */
+	llm?: {
+		provider: LLMProvider;
+		model: string;
+		apiKey: string;
+		maxIterations?: number;
+	};
+	/**
+	 * After Layer 2 (if any), insert `// @ts-expect-error - tsfix: …` above
+	 * each unresolved error site so tsc exits 0. Opt-in. Default false.
+	 */
+	stubOnFailure?: boolean;
+	/**
+	 * Run all layers in memory; report counts but don't write. Default false.
+	 * Layer 2 is auto-skipped under dryRun (it writes patches; would be a
+	 * no-op).
+	 */
+	dryRun?: boolean;
+	/** Logger. Default no-op. */
+	logger?: Logger;
+	/** Per-layer telemetry stream. Forwarded to Layer 1, 2, 4. */
+	onLayerEvent?: (event: LayerEvent) => void;
+	/** @internal — LLM call override. Tests inject a fake; real callers leave it. */
+	_callLLM?: import("./mendAgent.js").LLMCall;
+}
+
+export interface RunFullStackResult {
+	/** True if `errorsAfterAllLayers === 0`. */
+	passed: boolean;
+	/** Errors detected before any fix attempt. */
+	errorsBefore: number;
+	/** Errors remaining after Layer 0/1 (before Layer 2 + 4). */
+	errorsAfterLayer1: number;
+	/** Errors remaining after every layer that ran. */
+	errorsAfterAllLayers: number;
+	/** Per-layer sub-results. `layer2` is null when `llm` was omitted; `layer4` is null when `stubOnFailure` was false (or had no candidates). */
+	layer1: ValidationLoopResult["lspFixer"];
+	layer2: RunMendLoopResult | null;
+	layer4: { stubsApplied: AppliedStub[] } | null;
+	/** USD spent on Layer 2. 0 when Layer 2 didn't run. */
+	totalCostUsd: number;
+	/** Wall-clock total across all layers. */
+	totalLatencyMs: number;
+	/** Remaining diagnostics, grouped by TS code (e.g. `{TS2339: 3}`). */
+	remainingByCode: Record<string, number>;
+	/** Remaining diagnostics, grouped by file path (relative to workspaceRoot). */
+	remainingByFile: Record<string, number>;
+}
+
+// USD per million tokens. Mirrors cli/run-stack.ts PRICING (snapshot 2026-05-16).
+// TODO: extract to src/pricing.ts so cli + library + benchmark share one source.
+const PRICING: Record<LLMProvider, Record<string, { input: number; output: number }>> = {
+	anthropic: {
+		"claude-haiku-4-5": { input: 1.0, output: 5.0 },
+		"claude-sonnet-4-5": { input: 3.0, output: 15.0 },
+		"claude-sonnet-4-6": { input: 3.0, output: 15.0 },
+		"claude-opus-4-5": { input: 5.0, output: 25.0 },
+		"claude-opus-4-6": { input: 5.0, output: 25.0 },
+		"claude-opus-4-7": { input: 5.0, output: 25.0 },
+		"claude-opus-4-1": { input: 15.0, output: 75.0 },
+	},
+	openai: {
+		"gpt-5-nano": { input: 0.05, output: 0.4 },
+		"gpt-5-mini": { input: 0.25, output: 2.0 },
+		"gpt-5": { input: 1.25, output: 10.0 },
+		"gpt-5.1": { input: 1.25, output: 10.0 },
+		"gpt-5.2": { input: 1.75, output: 14.0 },
+		"o3-mini": { input: 1.1, output: 4.4 },
+		"o4-mini": { input: 1.1, output: 4.4 },
+		"o3": { input: 2.0, output: 8.0 },
+	},
+	google: {
+		"gemini-2.5-flash-lite": { input: 0.1, output: 0.4 },
+		"gemini-2.5-flash": { input: 0.3, output: 2.5 },
+		"gemini-2.5-pro": { input: 1.25, output: 10.0 },
+	},
+};
+
+function costUsd(provider: LLMProvider, model: string, inputTokens: number, outputTokens: number): number {
+	const p = PRICING[provider]?.[model];
+	if (!p) return 0;
+	return (inputTokens * p.input + outputTokens * p.output) / 1e6;
+}
+
+/**
+ * Run the full tsfix stack (Layer 0/1 → Layer 2 → Layer 4) end-to-end.
+ *
+ * @example
+ * ```ts
+ * const result = await runFullStack({
+ *   workspaceRoot: "/path/to/project",
+ *   llm: { provider: "anthropic", model: "claude-haiku-4-5", apiKey: KEY },
+ *   stubOnFailure: true,
+ *   onLayerEvent: (e) => console.log(e),
+ * });
+ * if (!result.passed) { ... }
+ * console.log(`Spent $${result.totalCostUsd.toFixed(4)}`);
+ * ```
+ */
+export async function runFullStack(opts: RunFullStackOptions): Promise<RunFullStackResult> {
+	const startMs = Date.now();
+	const { workspaceRoot, llm, stubOnFailure = false, dryRun = false, onLayerEvent } = opts;
+
+	const layer1 = runValidationLoop({
+		workspaceRoot,
+		targetFiles: opts.targetFiles,
+		skipLSPFixer: opts.skipLSPFixer,
+		dryRun,
+		logger: opts.logger,
+		onLayerEvent,
+	});
+
+	let layer2: RunMendLoopResult | null = null;
+	let layer4: { stubsApplied: AppliedStub[] } | null = null;
+	let totalCostUsd = 0;
+	let finalDiagnostics = layer1.diagnostics;
+
+	const shouldRunLayer2 = llm && !dryRun && layer1.errorsAfter > 0;
+	if (shouldRunLayer2) {
+		const errorDiags = layer1.diagnostics.filter((d) => d.category === "error");
+		layer2 = await runMendLoop({
+			context: {
+				workspaceRoot,
+				diagnostics: errorDiags,
+				erroredFiles: Array.from(new Set(errorDiags.map((d) => d.file))),
+			},
+			llm: { provider: llm.provider, model: llm.model, apiKey: llm.apiKey },
+			maxIterations: llm.maxIterations,
+			stubOnFailure,
+			onLayerEvent,
+			_callLLM: opts._callLLM,
+		});
+		totalCostUsd = costUsd(llm.provider, llm.model, layer2.totalInputTokens, layer2.totalOutputTokens);
+		if (layer2.stubs && layer2.stubs.length > 0) {
+			layer4 = { stubsApplied: layer2.stubs };
+		}
+		// Re-derive final diagnostics from disk — Layer 2/4 wrote files.
+		resetInProcessTscCache();
+		const post = runInProcessTsc({
+			workspaceRoot,
+			generatedFiles: opts.targetFiles ?? discoverTsFiles(workspaceRoot),
+			logger: opts.logger ?? noopLogger,
+		});
+		finalDiagnostics = post.diagnostics;
+	}
+
+	const finalErrorDiags = finalDiagnostics.filter((d) => d.category === "error");
+	const remainingByCode: Record<string, number> = {};
+	const remainingByFile: Record<string, number> = {};
+	for (const d of finalErrorDiags) {
+		remainingByCode[d.code] = (remainingByCode[d.code] ?? 0) + 1;
+		remainingByFile[d.file] = (remainingByFile[d.file] ?? 0) + 1;
+	}
+
+	return {
+		passed: finalErrorDiags.length === 0,
+		errorsBefore: layer1.errorsBefore,
+		errorsAfterLayer1: layer1.errorsAfter,
+		errorsAfterAllLayers: finalErrorDiags.length,
+		layer1: layer1.lspFixer,
+		layer2,
+		layer4,
+		totalCostUsd,
+		totalLatencyMs: Date.now() - startMs,
+		remainingByCode,
+		remainingByFile,
+	};
+}

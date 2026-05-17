@@ -82,6 +82,13 @@ export interface LSPFixerOptions {
 	 * before letting it modify a workspace.
 	 */
 	dryRun?: boolean;
+	/**
+	 * Per-error telemetry callback. One event per `(errorCode, fix-attempt)`
+	 * with `fixed: true` when the fix landed and `fixed: false` when the LSP
+	 * abstained (no safe candidate). Events fire even on dry runs.
+	 * Optional — undefined callback costs nothing.
+	 */
+	onLayerEvent?: (event: import("./index.js").LayerEvent) => void;
 }
 
 export interface LSPFixerResult {
@@ -113,7 +120,7 @@ export interface LSPFixerResult {
  * catch and fall through to LLM mend.
  */
 export function runLSPFixerPass(opts: LSPFixerOptions): LSPFixerResult {
-	const { workspaceRoot, targetFiles, logger } = opts;
+	const { workspaceRoot, targetFiles, logger, onLayerEvent } = opts;
 	const maxIterations = opts.maxIterations ?? 5;
 	const dryRun = opts.dryRun ?? false;
 	const tsconfigPath = path.join(workspaceRoot, "tsconfig.json");
@@ -225,8 +232,13 @@ export function runLSPFixerPass(opts: LSPFixerOptions): LSPFixerResult {
 
 		let appliedThisIter = 0;
 		for (const err of fixableErrors) {
+			const errStartMs = Date.now();
 			const fixes = safeGetCodeFixes(service, err);
 			if (!fixes || fixes.length === 0) {
+				onLayerEvent?.({
+					layer: 1, errorCode: err.code, fixed: false,
+					latencyMs: Date.now() - errStartMs, ts: Date.now(),
+				});
 				continue;
 			}
 			// Pick the safest applicable fix:
@@ -239,9 +251,17 @@ export function runLSPFixerPass(opts: LSPFixerOptions): LSPFixerResult {
 			//    package A vs package B).
 			const safeFixes = fixes.filter((f) => SAFE_FIX_NAMES.has(f.fixName));
 			if (safeFixes.length === 0) {
+				onLayerEvent?.({
+					layer: 1, errorCode: err.code, fixed: false,
+					latencyMs: Date.now() - errStartMs, ts: Date.now(),
+				});
 				continue;
 			}
 			if (safeFixes.length > 1 && !fixesAreEquivalent(safeFixes)) {
+				onLayerEvent?.({
+					layer: 1, errorCode: err.code, fixed: false,
+					latencyMs: Date.now() - errStartMs, ts: Date.now(),
+				});
 				continue;
 			}
 			const fix = safeFixes[0];
@@ -252,6 +272,15 @@ export function runLSPFixerPass(opts: LSPFixerOptions): LSPFixerResult {
 				for (const change of fix.changes) {
 					filesEdited.add(change.fileName);
 				}
+				onLayerEvent?.({
+					layer: 1, errorCode: err.code, fixed: true,
+					latencyMs: Date.now() - errStartMs, ts: Date.now(),
+				});
+			} else {
+				onLayerEvent?.({
+					layer: 1, errorCode: err.code, fixed: false,
+					latencyMs: Date.now() - errStartMs, ts: Date.now(),
+				});
 			}
 		}
 		logger.info(
